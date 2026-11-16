@@ -42,6 +42,7 @@ in Chronos, so the comments are part of the product, not just code hygiene.
 from __future__ import annotations
 
 import os
+import re
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -54,7 +55,10 @@ from .v1 import (
     USER_DIR,
     is_template_eligible_for_day,
     list_all_day_templates,
+    lowercase_top_level_keys,
+    prepare_day_template,
     read_template,
+    normalize_template_times,
     status_current_path,
 )
 
@@ -964,6 +968,9 @@ class KairosV2Scheduler:
         universe = state.schedule.get("candidate_universe", {})
         candidates = list(universe.get("candidates", []) if isinstance(universe, dict) else [])
         completed_names = self._completed_names_before_now(state.target_date, state.now)
+        # The scheduling docs drop "completed/skipped rows" for the day: a block the
+        # pilot skipped should not be handed straight back on the next reschedule.
+        skipped_names = self._closed_names_before_now(state.target_date, state.now) - completed_names
         anchor_name_tokens = self._hard_anchor_semantic_tokens(state)
         open_flexible_minutes = int(
             state.schedule.get("day_budget", {}).get("open_flexible_minutes_before_sleep") or 0
@@ -981,6 +988,12 @@ class KairosV2Scheduler:
             if name in completed_names:
                 record = dict(candidate)
                 record["impossible_reason"] = "already_completed_today"
+                impossible.append(record)
+                continue
+
+            if name in skipped_names:
+                record = dict(candidate)
+                record["impossible_reason"] = "skipped_today"
                 impossible.append(record)
                 continue
 
@@ -1113,8 +1126,14 @@ class KairosV2Scheduler:
             if isinstance(item, dict)
         ]
         expanded_nodes = expanded_children + expanded_sequence
+        # Expansion merges in routine/subroutine content authored elsewhere (e.g. the
+        # Routine Builder), so normalize builder-style time fields once more here.
+        normalize_template_times(expanded_nodes)
+        # Timed blocks are authored under `children` (Day Builder) as well as under
+        # `sequence`. `_collect_structural_sequence` already skips every fixed-time
+        # node, so they must all be discovered here or they vanish from the day.
         active_fixed_time_nodes = self._apply_runtime_horizon_to_surfaces(
-            self._discover_fixed_time_structure_nodes(expanded_sequence),
+            self._discover_fixed_time_structure_nodes(expanded_nodes),
             state,
             duration_keys=("duration_minutes", "duration"),
         )
@@ -1124,6 +1143,23 @@ class KairosV2Scheduler:
             if isinstance(state.schedule.get("reality_filtered_candidates"), dict)
             else []
         )
+        # A routine that is placed as one block already contains its members, and a
+        # block with a fixed slot must not also be offered to windows or gap fill.
+        # Without this the same habit shows up inside its routine and again on its own.
+        covered_by_structure = self._identities_covered_by_structure(
+            expanded_nodes,
+            viable_candidates,
+            active_fixed_time_nodes,
+            closed_names=self._closed_names_before_now(state.target_date, state.now),
+        )
+        if covered_by_structure:
+            viable_candidates = [
+                candidate for candidate in viable_candidates
+                if str(candidate.get("identity") or "").strip() not in covered_by_structure
+            ]
+            if isinstance(state.schedule.get("reality_filtered_candidates"), dict):
+                state.schedule["reality_filtered_candidates"]["candidates"] = viable_candidates
+                state.schedule["reality_filtered_candidates"]["count"] = len(viable_candidates)
         authored_window_nodes = self._discover_windows_in_structure(expanded_nodes)
         windows: List[Dict[str, Any]] = []
         for window in authored_window_nodes:
@@ -1163,6 +1199,10 @@ class KairosV2Scheduler:
             "expanded_nodes": expanded_nodes,
             "active_fixed_time_node_count": len(active_fixed_time_nodes),
             "active_fixed_time_nodes": active_fixed_time_nodes,
+            "covered_by_structure": [
+                {"identity": identity, "covered_by": reason}
+                for identity, reason in sorted(covered_by_structure.items())
+            ],
             "all_window_nodes": [
                 {
                     **window,
@@ -2729,7 +2769,7 @@ class KairosV2Scheduler:
         """
         templates: List[Dict[str, Any]] = []
         for path in list_all_day_templates():
-            template = read_template(path)
+            template = prepare_day_template(read_template(path))
             if not isinstance(template, dict):
                 continue
             if not is_template_eligible_for_day(template, weekday_name):
@@ -2798,7 +2838,7 @@ class KairosV2Scheduler:
         child_name = str(child.get("name") or "").strip().lower()
         child_name_token = self._normalize_token(child.get("name"))
         for path in list_all_day_templates():
-            template = read_template(path)
+            template = prepare_day_template(read_template(path))
             if not isinstance(template, dict):
                 continue
             template_name = str(template.get("name") or "").strip().lower()
@@ -3325,6 +3365,28 @@ class KairosV2Scheduler:
                 completed.add(name)
         return completed
 
+    def _closed_names_before_now(self, day: date, now: datetime) -> set[str]:
+        """
+        Names the pilot completed or skipped on the target date, up to `now`.
+        """
+        closed: set[str] = set(self._completed_names_before_now(day, now))
+        for entry in self._read_completion_entries_for_day(day).values():
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("status") or "").strip().lower() != "skipped":
+                continue
+            logged_at = str(entry.get("logged_at") or "").strip()
+            if logged_at:
+                try:
+                    if day == now.date() and datetime.fromisoformat(logged_at) > now:
+                        continue
+                except ValueError:
+                    pass
+            name = str(entry.get("name") or entry.get("item_name") or "").strip().lower()
+            if name:
+                closed.add(name)
+        return closed
+
     def _looks_like_sleep_entry(self, entry: Dict[str, Any]) -> bool:
         """
         Heuristic for whether a completion entry is sleep-related.
@@ -3389,7 +3451,9 @@ class KairosV2Scheduler:
                 payload = read_template(path)
                 if not isinstance(payload, dict):
                     continue
-                item = dict(payload)
+                # Builder/default-created files use `Name:`; look items up the way
+                # ItemManager does, by lowercase keys, with builder times normalized.
+                item = normalize_template_times(lowercase_top_level_keys(payload))
                 item.setdefault("type", expected_type)
                 item["_source_path"] = path
                 items.append(item)
@@ -4325,6 +4389,75 @@ class KairosV2Scheduler:
             normalized["top_level_parent_type"] = normalized.get("_top_level_parent_type")
             fixed_nodes.append(normalized)
         return fixed_nodes
+
+    def _identities_covered_by_structure(
+        self,
+        nodes: List[Dict[str, Any]],
+        viable_candidates: List[Dict[str, Any]],
+        active_fixed_time_nodes: List[Dict[str, Any]],
+        closed_names: Optional[set[str]] = None,
+    ) -> Dict[str, str]:
+        """
+        Find candidates that the day structure already accounts for.
+
+        Returns `identity -> reason` for:
+        - every active fixed-time node (it has its own slot on the clock)
+        - every member of a container (routine / subroutine / microroutine) that
+          is scheduled as one unit: either it holds an active fixed slot, or it is
+          itself a viable candidate with a real duration and will be placed whole
+        - every member of a container the pilot already completed or skipped
+          today (finishing "Morning Routine" finishes its steps)
+
+        Containers with no usable duration are left alone, so their members are
+        still placed one by one in authored order.
+        """
+        covered: Dict[str, str] = {}
+        closed = {str(name).strip().lower() for name in (closed_names or set()) if str(name).strip()}
+        active_fixed = {
+            str(node.get("identity") or self._candidate_identity_for_node(node)).strip()
+            for node in active_fixed_time_nodes
+            if isinstance(node, dict)
+        }
+        active_fixed.discard("")
+        for identity in active_fixed:
+            covered[identity] = "fixed_time_slot"
+
+        unit_durations = {
+            str(candidate.get("identity") or "").strip(): self._coerce_minutes(candidate.get("duration")) or 0
+            for candidate in viable_candidates
+        }
+
+        def visit(level: List[Any]) -> None:
+            for node in level:
+                if not isinstance(node, dict):
+                    continue
+                children = node.get("children") or []
+                if not isinstance(children, list) or not children:
+                    continue
+                if (
+                    bool(node.get("window"))
+                    or self._is_hard_anchor(node)
+                    or self._is_explicit_free_node(node)
+                    or self._is_explicit_buffer_node(node)
+                ):
+                    visit(children)
+                    continue
+                identity = self._candidate_identity_for_node(node)
+                placed_as_unit = bool(identity) and (
+                    identity in active_fixed or unit_durations.get(identity, 0) > 0
+                )
+                closed_today = str(node.get("name") or "").strip().lower() in closed
+                if not placed_as_unit and not closed_today:
+                    visit(children)
+                    continue
+                reason = f"member_of:{identity}" if placed_as_unit else f"parent_closed_today:{identity}"
+                for member in self._walk_nodes(children):
+                    member_identity = self._candidate_identity_for_node(member)
+                    if member_identity and member_identity != identity:
+                        covered.setdefault(member_identity, reason)
+
+        visit(nodes)
+        return covered
 
     def _is_fixed_time_structural_node(self, node: Dict[str, Any]) -> bool:
         """
@@ -6138,7 +6271,17 @@ class KairosV2Scheduler:
             try:
                 return max(0, int(round(float(text[:-1]) * 60)))
             except ValueError:
-                return None
+                pass
+        # "15m", "90 min", "1h30m", "2h 15m": the duration formats used in item
+        # files, the docs and the wizards (see utilities/duration_parser.py).
+        match = re.fullmatch(
+            r"(?:(\d+(?:\.\d+)?)\s*h(?:ours?|rs?)?)?\s*(?:(\d+)\s*m(?:in(?:ute)?s?)?)?",
+            text,
+        )
+        if match and (match.group(1) or match.group(2)):
+            hours = float(match.group(1)) if match.group(1) else 0.0
+            minutes = int(match.group(2)) if match.group(2) else 0
+            return max(0, int(round(hours * 60)) + minutes)
         return None
 
     def _minutes_to_hm(self, minutes: int) -> str:

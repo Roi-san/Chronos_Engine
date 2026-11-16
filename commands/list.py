@@ -1,5 +1,5 @@
 import sys
-from modules.item_manager import list_all_items
+from modules.item_manager import list_all_items, property_matches
 from modules.console import run_command, parse_input
 
 def _depluralize(word):
@@ -78,7 +78,7 @@ def run(args, properties):
         for item in all_items:
             match = True
             for key, value in filter_properties.items():
-                if str(item.get(key)) != str(value):
+                if not property_matches(item.get(key), value):
                     match = False
                     break
             if match:

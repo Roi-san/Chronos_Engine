@@ -1,4 +1,4 @@
-from modules.item_manager import read_item_data, write_item_data
+from modules.item_manager import read_item_data, write_item_data, coerce_property_value
 from modules import variables as Variables
 
 # --- Global Variables for Scripting ---
@@ -88,8 +88,18 @@ def run(args, properties):
         name_parts.append(part)
     item_name = ' '.join(name_parts) if name_parts else args[1]
 
-    # The properties to set are already in the 'properties' dictionary
+    # Callers such as the dashboard pass the properties as a dictionary. From the
+    # console, `set` receives its raw tokens (see Console.parse_input), so the
+    # `key:value` tokens after the item name are parsed here.
     item_properties_to_set = dict(properties) if properties else {}
+    for part in Variables.expand_list(list(args[1 + len(name_parts):])):
+        part = str(part)
+        if part.startswith('--'):
+            item_properties_to_set[part[2:]] = True
+        elif ':' in part:
+            key, _sep, value = part.partition(':')
+            if key.strip():
+                item_properties_to_set[key.strip()] = coerce_property_value(value)
 
     # Ensure there are properties to set
     if not item_properties_to_set:

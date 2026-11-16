@@ -68,11 +68,30 @@ def run(args, properties):
     Marks an item with a new status. For repeating items (with a 'frequency' property),
     it updates a daily completion file. For non-repeating items, it updates the item's own file.
     """
-    if not args or "help" in args or "--help" in args:
+    has_split_token = isinstance(properties, dict) and any(
+        isinstance(key, str) and not key.startswith("__") and key.lower() != "date"
+        for key in properties
+    )
+    if (not args and not has_split_token) or "help" in args or "--help" in args:
         print(get_help_message())
         return
 
     full_arg_string = ' '.join(args) # Join all parts to form the full argument string
+
+    # From the console, `mark "Morning Routine":completed` reaches this command with
+    # the `name:status` token already split off into `properties` (the console
+    # treats any `key:value` token as a property). Put it back together.
+    if ':' not in full_arg_string and isinstance(properties, dict):
+        reserved = {"date"}
+        candidates = [
+            (key, value) for key, value in properties.items()
+            if isinstance(key, str) and not key.startswith("__") and key.lower() not in reserved
+            and isinstance(value, str) and value.strip()
+        ]
+        if len(candidates) == 1:
+            key, value = candidates[0]
+            full_arg_string = f"{(full_arg_string + ' ' + key).strip()}:{value.strip()}"
+            properties = {k: v for k, v in properties.items() if k != key}
 
     try:
         # Find the last colon to separate item_name from status

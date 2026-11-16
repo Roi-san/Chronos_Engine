@@ -18,7 +18,9 @@ def run(args, properties):
         item_type = item_type_raw
 
     item_name_parts = []
-    command_properties = {}
+    # The console (and the dashboard's /api/item) pre-parse `key:value` tokens into
+    # `properties`, so start from those; tokens still present in args override them.
+    command_properties = dict(properties) if isinstance(properties, dict) else {}
 
     # Parse item name and properties from the rest of the args
     # The item name can be multi-word and might be quoted, so we need to be careful

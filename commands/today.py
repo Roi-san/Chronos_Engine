@@ -3087,6 +3087,10 @@ def run(args, properties):
             except Exception as e:
                 print(f"Failed loading schedule at {schedule_path}: {e}")
                 return
+            # Kairos v2 saves a runtime payload ({kind, items, schedule, ...}) rather
+            # than a bare list of blocks; display works on the list of blocks.
+            if isinstance(resolved_schedule, dict):
+                resolved_schedule = extract_schedule_items(resolved_schedule)
             all_conflicts = []
 
         display_level = float('inf')

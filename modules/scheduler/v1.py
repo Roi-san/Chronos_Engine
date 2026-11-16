@@ -137,6 +137,71 @@ def read_template(template_path):
     with open(template_path, 'r') as f:
         return yaml.safe_load(f)
 
+def normalize_template_times(node):
+    """
+    Give every template node the `start_time` / `end_time` fields the scheduler reads.
+
+    The Day Builder and Routine Builder save a block's clock time as
+    `ideal_start_time` / `ideal_end_time`, and hand-written templates may use
+    `start` / `end`. Kairos places anchors, windows and timed blocks from
+    `start_time` / `end_time`, so without this a builder-made day reaches the
+    scheduler with no times at all. Explicit `start_time` / `end_time` always win.
+    Works in place on dicts and lists (children / sequence / items) and returns `node`.
+    """
+    if isinstance(node, list):
+        for entry in node:
+            normalize_template_times(entry)
+        return node
+    if not isinstance(node, dict):
+        return node
+    if not node.get("start_time"):
+        fallback = node.get("start") or node.get("ideal_start_time")
+        if fallback:
+            node["start_time"] = fallback
+    if not node.get("end_time"):
+        fallback = node.get("end") or node.get("ideal_end_time")
+        if fallback:
+            node["end_time"] = fallback
+    for key in ("children", "sequence", "items"):
+        nested = node.get(key)
+        if isinstance(nested, list):
+            normalize_template_times(nested)
+    return node
+
+
+def lowercase_top_level_keys(payload):
+    """
+    Return a copy of an item/template mapping with lowercase top-level keys.
+
+    Files created from the `*_defaults.yml` templates carry `Name:` / `Duration:`
+    while everything written later uses lowercase. ItemManager.read_item_data
+    lowercases on read; the scheduler needs the same view to find items by `name`.
+    An already-lowercase key wins over a capitalised duplicate.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    out = {}
+    for key, value in payload.items():
+        if isinstance(key, str) and key == key.lower():
+            out[key] = value
+    for key, value in payload.items():
+        lowered = str(key).lower()
+        if lowered not in out:
+            out[lowered] = value
+    return out
+
+
+def prepare_day_template(template):
+    """
+    Put a freshly read day template into the shape the scheduler expects:
+    lowercase top-level keys and normalized node times. Non-dicts pass through.
+    """
+    if isinstance(template, dict):
+        template = lowercase_top_level_keys(template)
+        normalize_template_times(template)
+    return template
+
+
 def format_time(time_obj):
     """
     Formats a datetime object into a string.

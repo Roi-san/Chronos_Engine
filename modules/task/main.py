@@ -4,7 +4,8 @@ from datetime import datetime
 from modules.item_manager import (
     ensure_dir, get_item_path, read_item_data, write_item_data,
     list_all_items, delete_item, get_editor_command, open_item_in_editor,
-    generic_handle_new # <--- Add this import
+    generic_handle_new, # <--- Add this import
+    property_matches
 )
 
 # Define the item type for this module
@@ -52,8 +53,8 @@ def handle_list(sort_by, properties):
     print(f"\n✅ {ITEM_TYPE.capitalize()}s List")
     print("──────────────────────────────")
     for data in items_data:
-        name = data.get("Name", "Unknown")
-        status = data.get("Status", "N/A")
+        name = data.get("name") or data.get("Name") or "Unknown"
+        status = data.get("status") or data.get("Status") or "N/A"
         priority = data.get("priority", "N/A")
         print(f"📝 {name}  |  Status: {status} | Priority: {priority}")
     print("──────────────────────────────\n")
@@ -135,13 +136,13 @@ def handle_find(keyword, properties):
     found_items = []
     for data in items_data:
         # Check keyword in Name or Content
-        name_match = keyword.lower() in data.get("Name", "").lower()
-        content_match = keyword.lower() in data.get("Content", "").lower()
+        name_match = keyword.lower() in str(data.get("name") or data.get("Name") or "").lower()
+        content_match = keyword.lower() in str(data.get("content") or data.get("Content") or "").lower()
 
         # Check properties
         properties_match = True
         for key, value in properties.items():
-            if str(data.get(key)).lower() != str(value).lower():
+            if not property_matches(data.get(key), value, case_sensitive=False):
                 properties_match = False
                 break
         
@@ -152,8 +153,8 @@ def handle_find(keyword, properties):
         print(f"\n🔎 Found {ITEM_TYPE.capitalize()}s")
         print("──────────────────────────────")
         for data in found_items:
-            name = data.get("Name", "Unknown")
-            status = data.get("Status", "N/A")
+            name = data.get("name") or data.get("Name") or "Unknown"
+            status = data.get("status") or data.get("Status") or "N/A"
             priority = data.get("priority", "N/A")
             print(f"📝 {name}  |  Status: {status} | Priority: {priority}")
         print("──────────────────────────────\n")

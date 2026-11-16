@@ -1,6 +1,7 @@
+import os
 from datetime import datetime, timedelta
 
-from .v1 import USER_DIR, is_template_eligible_for_day, list_all_day_templates, read_template
+from .v1 import USER_DIR, is_template_eligible_for_day, list_all_day_templates, prepare_day_template, read_template
 
 
 SLEEP_POLICY_OPTIONS = [
@@ -104,7 +105,7 @@ def _eligible_templates_for_date(target_dt):
     weekday = target_dt.strftime("%A").lower()
     out = []
     for path in list_all_day_templates():
-        template = read_template(path)
+        template = prepare_day_template(read_template(path))
         if not isinstance(template, dict):
             continue
         if not is_template_eligible_for_day(template, weekday):

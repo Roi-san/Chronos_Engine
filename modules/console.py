@@ -1322,6 +1322,10 @@ def _coerce_value(val: str):
             return int(val)
     except Exception:
         pass
+    # `[a,b,c]` -> list (e.g. tags:[deep_work,writing])
+    sv = str(val).strip()
+    if len(sv) >= 2 and sv.startswith('[') and sv.endswith(']'):
+        return [p.strip().strip("\"'") for p in sv[1:-1].split(',') if p.strip().strip("\"'")]
     return val
 
 
@@ -1557,7 +1561,7 @@ def execute_script(script_path):
     def run_lines(lines):
         import modules.conditions as Conditions
         from modules import variables as _V
-        from modules.item_manager import list_all_items
+        from modules.item_manager import list_all_items, property_matches
         i = 0
         L = len(lines)
 
@@ -1749,7 +1753,7 @@ def execute_script(script_path):
                 for item in items:
                     ok = True
                     for key, value in props.items():
-                        if str(item.get(key)) != str(value):
+                        if not property_matches(item.get(key), value):
                             ok = False
                             break
                     if ok:

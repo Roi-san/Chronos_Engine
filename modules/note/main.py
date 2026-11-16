@@ -3,7 +3,8 @@ import yaml
 from datetime import datetime
 from modules.item_manager import (
     ensure_dir, get_item_path, read_item_data, write_item_data,
-    list_all_items, delete_item, get_editor_command, open_item_in_editor
+    list_all_items, delete_item, get_editor_command, open_item_in_editor,
+    property_matches
 )
 
 # Define the item type for this module
@@ -69,7 +70,7 @@ def handle_list(sort_by, properties):
     print(f"\n📂 {ITEM_TYPE.capitalize()}s Index")
     print("──────────────────────────────")
     for data in items_data:
-        name = data.get("Name", "Unknown")
+        name = data.get("name") or data.get("Name") or "Unknown"
         created = data.get("Created", "Unknown")
         priority = data.get("priority", "N/A") # Display priority if available
         print(f"📝 {name}  |  ⏳ {created} | Priority: {priority}")
@@ -197,13 +198,13 @@ def handle_find(keyword, properties):
     found_items = []
     for data in items_data:
         # Check keyword in Name or Content
-        name_match = keyword.lower() in data.get("Name", "").lower()
-        content_match = keyword.lower() in data.get("Content", "").lower()
+        name_match = keyword.lower() in str(data.get("name") or data.get("Name") or "").lower()
+        content_match = keyword.lower() in str(data.get("content") or data.get("Content") or "").lower()
 
         # Check properties
         properties_match = True
         for key, value in properties.items():
-            if str(data.get(key)).lower() != str(value).lower():
+            if not property_matches(data.get(key), value, case_sensitive=False):
                 properties_match = False
                 break
         
@@ -214,7 +215,7 @@ def handle_find(keyword, properties):
         print(f"\n🔎 Found {ITEM_TYPE.capitalize()}s")
         print("──────────────────────────────")
         for data in found_items:
-            name = data.get("Name", "Unknown")
+            name = data.get("name") or data.get("Name") or "Unknown"
             created = data.get("Created", "Unknown")
             print(f"📝 {name}  |  ⏳ {created}")
         print("──────────────────────────────\n")

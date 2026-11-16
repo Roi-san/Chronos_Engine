@@ -1,5 +1,5 @@
 from modules.console import run_command, parse_input, _is_property_token, _coerce_value
-from modules.item_manager import list_all_items
+from modules.item_manager import list_all_items, property_matches
 from modules import variables as _V
 import re
 
@@ -68,7 +68,7 @@ def run(args, properties):
     for item in items:
         ok = True
         for key, value in props.items():
-            if str(item.get(key)) != str(value):
+            if not property_matches(item.get(key), value):
                 ok = False
                 break
         if ok:

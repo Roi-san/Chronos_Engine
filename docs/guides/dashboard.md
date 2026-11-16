@@ -20,6 +20,7 @@ Both start the local HTTP server (`utilities/dashboard/server.py`) and open the 
 ## Views & Widgets
 
 ### Views
+- **Home** - Default landing page: the block to do right now, status check-in, quick capture, the setup path, and one card per life area (goals, commitments, habits, routines, days and weeks, tasks, projects, fixed times) with buttons into the matching wizard, builder or widget. See `docs/guides/home.md`.
 - **Calendar** - Year/Month/Week/Day canvas with a Day List tree for the selected day. Selecting a block in Day view targets Scheduler actions; selecting a date previews that day (today is actionable). Month overlays load presets from `presets/calendar_overlays/` (including Happiness overlays for scheduled vs completed days).
 - **Tracker** - Year-at-a-glance tracker view with 12 month grids and a right inspector for selecting one habit or commitment to track.
   - Future days are gray.

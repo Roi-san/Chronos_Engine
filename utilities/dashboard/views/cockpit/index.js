@@ -1401,18 +1401,19 @@ class CockpitPanelManager {
   }
 }
 
+// Folder names under utilities/dashboard/panels/ (snake_case since the lowercase rename).
 const PANEL_IMPORTS = [
-  'Schedule',
-  'Matrix',
-  'MatrixVisuals',
-  'StatusStrip',
-  'Commitments',
-  'Lists',
-  'Deadlines',
-  'Checklist',
-  'Flashcards',
-  'RandomPicker',
-  'MapOfHappiness',
+  'schedule',
+  'matrix',
+  'matrix_visuals',
+  'status_strip',
+  'commitments',
+  'lists',
+  'deadlines',
+  'checklist',
+  'flashcards',
+  'random_picker',
+  'map_of_happiness',
 ];
 
 async function loadPanels(manager) {

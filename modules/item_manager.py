@@ -149,12 +149,75 @@ def read_item_data(item_type, name):
         data = {k.lower(): v for k, v in raw_data.items()}
     return data
 
+def coerce_property_value(val):
+    """
+    Turn a `key:value` token's value into a typed value:
+    true/false -> bool, digits -> int, `[a,b,c]` -> list of strings, else the string.
+    """
+    if not isinstance(val, str):
+        return val
+    text = val.strip()
+    low = text.lower()
+    if low == 'true':
+        return True
+    if low == 'false':
+        return False
+    if low.isdigit() or (low.startswith('-') and low[1:].isdigit()):
+        return int(text)
+    if len(text) >= 2 and text.startswith('[') and text.endswith(']'):
+        return [part.strip().strip('"\'') for part in text[1:-1].split(',') if part.strip().strip('"\'')]
+    return val
+
+
+def normalize_tags(value):
+    """
+    Tags are always stored as a list of strings. The scheduler iterates `tags`,
+    so a bare string would be read one character at a time.
+    Accepts a list, `a`, `a,b` or `[a,b]`.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        parts = list(value)
+    else:
+        text = str(value).strip()
+        if text.startswith('[') and text.endswith(']'):
+            text = text[1:-1]
+        parts = text.split(',')
+    out = []
+    for part in parts:
+        tag = str(part).strip().strip('"\'').strip()
+        if tag and tag not in out:
+            out.append(tag)
+    return out
+
+
+def property_matches(item_value, wanted, case_sensitive=True):
+    """
+    Filter comparison used by list/find/for. Scalars compare as before. When the
+    item's value is a list (tags, days, ...), a scalar filter matches if it is one
+    of the entries, and a list filter matches if all of its entries are present.
+    """
+    def norm(v):
+        text = str(v)
+        return text if case_sensitive else text.lower()
+
+    if isinstance(item_value, (list, tuple, set)) or isinstance(wanted, (list, tuple, set)):
+        have = {norm(v).strip() for v in (item_value if isinstance(item_value, (list, tuple, set)) else ([] if item_value is None else [item_value]))}
+        want = [norm(v).strip() for v in (wanted if isinstance(wanted, (list, tuple, set)) else [wanted])]
+        return bool(want) and all(w in have for w in want)
+    return norm(item_value) == norm(wanted)
+
+
 def write_item_data(item_type, name, data):
     """
     Writes the given data to an item's YAML file.
     """
     path = get_item_path(item_type, name)
     ensure_dir(os.path.dirname(path))
+    if isinstance(data, dict):
+        for tags_key in [k for k in data.keys() if str(k).lower() == 'tags']:
+            data[tags_key] = normalize_tags(data[tags_key])
     try:
         from utilities.resolution_assoc import apply_resolution_associations
         data = apply_resolution_associations(item_type, data)
@@ -324,6 +387,9 @@ def generic_handle_new(item_type, item_name, properties):
     placeholders = {
         "{{timestamp}}": now.strftime("%Y-%m-%d_%H-%M-%S"),
         "{{tomorrow}}": (now + timedelta(days=1)).strftime("%Y-%m-%d"),
+        "{{today}}": now.strftime("%Y-%m-%d"),
+        # Used by milestone_defaults.yml (Target_Date).
+        "{{end_of_year}}": now.replace(month=12, day=31).strftime("%Y-%m-%d"),
     }
 
     content = {k.lower().replace('default_', ''): v for k, v in default_properties.items()}

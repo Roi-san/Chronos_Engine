@@ -1805,6 +1805,7 @@ ready(async () => {
 
   function pickDefaultVisibleView() {
     const alphaCandidates = [
+      { name: 'Home', label: 'Home' },
       { name: 'Schedule', label: 'Schedule' },
       { name: 'DayBuilder', label: 'Day Builder' },
       { name: 'WeekBuilder', label: 'Week Builder' },
@@ -1812,9 +1813,10 @@ ready(async () => {
       { name: 'Docs', label: 'Docs' },
     ];
     const fullDevCandidates = [
+      { name: 'Home', label: 'Home' },
       { name: 'Schedule', label: 'Schedule' },
       { name: 'Calendar', label: 'Calendar' },
-      ...alphaCandidates.filter((candidate) => candidate.name !== 'Schedule'),
+      ...alphaCandidates.filter((candidate) => candidate.name !== 'Schedule' && candidate.name !== 'Home'),
     ];
     const candidates = shouldSuppressHiddenAlphaItems() ? alphaCandidates : fullDevCandidates;
     for (const candidate of candidates) {
@@ -4021,7 +4023,8 @@ ready(async () => {
   console.log('[Chronos][app] Dashboard app ready');
   // Listen for widget:show to reveal/pulse a widget (e.g., ItemManager)
   try {
-    (window.__chronosBus = context?.bus)?.on('widget:show', (name) => {
+    // `context` lives in core/runtime.js, not here; the shared bus is exposed as window.ChronosBus.
+    (window.__chronosBus = window.ChronosBus)?.on('widget:show', (name) => {
       void openWidgetByName(name);
     });
   } catch { }

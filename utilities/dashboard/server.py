@@ -7280,7 +7280,7 @@ def _ensure_default_playlist(library=None):
     _write_playlist(DEFAULT_PLAYLIST_SLUG, data)
 
 
-def _list_playlists():
+def _list_playlists(_retry=True):
     _ensure_media_dirs()
     results = []
     try:
@@ -7300,9 +7300,11 @@ def _list_playlists():
             "track_count": len(data.get("tracks") or []),
             "description": data.get("description"),
         })
-    if not results:
+    if not results and _retry:
+        # With no MP3s there is nothing to build a default playlist from, so
+        # retry only once instead of recursing forever.
         _ensure_default_playlist()
-        return _list_playlists()
+        return _list_playlists(_retry=False)
     return results
 
 
@@ -7447,6 +7449,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         self._safe_stderr(f"DEBUG: GET request path: {parsed.path}\n")
+
+        if parsed.path.startswith("/api/home/"):
+            try:
+                from utilities.dashboard import home_api as HomeApi
+
+                if HomeApi.handle_get(self, parsed):
+                    return
+                self._write_json(404, {"ok": False, "error": "Unknown Home endpoint"})
+            except Exception as e:
+                self._write_json(500, {"ok": False, "error": f"Home GET error: {e}"})
+            return
 
         if parsed.path.startswith("/api/thoughtforms"):
             try:

@@ -2291,7 +2291,13 @@ class CanvasView {
     if (!res.ok) {
       throw new Error(`Request failed: ${res.status}`);
     }
-    return res.json();
+    // Some endpoints (e.g. POST /api/item) answer in YAML rather than JSON.
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { ok: !/^ok:\s*false/m.test(text), raw: text };
+    }
   }
 
   async _loadLinkSettings() {
