@@ -1,63 +1,166 @@
 # Standard Item Properties
 
-This is a practical reference of item properties that Chronos actively uses today.  
-It focuses on fields that are **wired into scheduling, completion, filtering, and UI logic**.
+Last verified: 2026-11-17 against `modules/scheduler/kairos_v2.py`, `modules/scheduler/direction.py`, `modules/scheduler/v1.py` (template helpers), `modules/scheduler/sleep_gate.py` and `modules/item_manager.py`.
 
-General (all item types)
-- `name` (string): Human-readable name. Used as the primary identifier in schedules.
-- `type` (string): Item type (task, habit, routine, etc.). Determines storage folder and behavior.
-- `status` (string): Used across UI and logic; common values: `pending`, `completed`, `skipped`, `partial`.
-- `tags` (list or comma string): Used by filters, windows, dashboards.
-- `category` (string): Used in importance scoring and filtering.
-- `priority` (string): Used in importance scoring via `Priority_Settings.yml`.
-- `duration` (string or number): Used for scheduling. Accepts minutes (e.g., `30`) or strings like `45m`, `1h`.
-- `sleep` (bool): Canonical sleep marker (`true`/`false`). Prefer this over name/tag heuristics when identifying sleep-related items/anchors.
+This is a practical reference of item properties that Chronos actively uses today, with the emphasis on what the active scheduler (**Kairos v2**) does with each one. Where a property is written by a builder or wizard but ignored by Kairos v2, it is listed under [Not read by Kairos v2](#not-read-by-kairos-v2).
 
-Scheduling / Templates
-- `ideal_start_time` / `ideal_end_time` (HH:MM): Used during schedule build to anchor the ideal time window.
-- `start_time` / `end_time` (HH:MM or datetime): Used in schedules and completion logs.
-- `reschedule` (bool or string): `false` / `never` makes an item an anchor (won’t move/trim/cut).
-- `reschedule_policy` (string): `auto` (default) or `manual` (skip auto-reschedule).
-- `flexible` (bool): If false, scheduler won’t shift the item.
-- `absorbable` (bool): For timeblocks; if false, timeblock is not trimmable.
-- `essential` (bool): Protected from cutting during conflicts.
-- `depends_on` (list of names): Dependency tracking for shift propagation.
-- `children` / `sequence` / `items` (list): Template children nodes.
+Keys are case-insensitive at the top level of an item file: `Name:` and `name:` are the same (`ItemManager.read_item_data` and Kairos both lowercase top-level keys). Nested keys, such as those inside `status_requirements` or `filters`, are matched as written but compared case-insensitively.
 
-Variants / Status-Aware Scheduling
-- `status_requirements` (map): Gates template selection and variant matching.
-  - Expected format is status-dimension -> value, for example:
-    - `focus: low`
-    - `health: sick`
-  - Multiple dimensions can be set on a single item/template.
-  - Scheduler uses these as context signals to favor/match items when current status aligns.
-  - Intended for schedulable families (habit/task/day/week/routine/subroutine/microroutine and related schedulables).
-- `variants` (list): Each variant can override fields if its `status_requirements` match.
-- `<StatusName>` (legacy keys): Treated like status requirements by the scheduler.
+## General (all item types)
 
-Auto-Injection
-- `auto_inject` (bool): Injects item at top of schedule if `status_requirements` match.
+- `name` (string): Human-readable name. The scheduler identifies an item by `type` + `name`, and completion logs match by name.
+- `type` (string): Item type (task, habit, routine, ...). Determines the storage folder and behavior.
+- `status` (string): Common values `pending`, `completed`, `skipped`, `partial`. Kairos skips items whose `status` is `inactive`, `archived`, `disabled` or `paused`. It does **not** skip `status: completed`; see the note under `due_date`.
+- `tags` (list): Used by window filters, dashboards and `list`/`find`/`for` filters. Always stored as a list; a comma string given on the console is split.
+- `category` (string): Ranked in `user/settings/category_settings.yml`; used in scoring and in window filters.
+- `priority` (string): Ranked in `user/settings/priority_settings.yml`; used in scoring.
+- `duration` (number or string): Length in minutes. Accepted: `30`, `"30"`, `1h`, `1.5h`, `15m`, `90 min`, `1h30m`, `2h 15m`. An item with no usable duration cannot be placed.
+- `sleep` (bool): Canonical sleep marker. Kairos also treats an anchor as sleep when its category is `sleep`, it is tagged `sleep`, or its name contains "sleep" or "bedtime". Prefer `sleep: true`.
 
-Work Windows (template nodes)
-- `window` (bool): Marks a template node as a work window.
-- `start` / `end` (HH:MM): Window time range.
-- `filters` (map): Filter rules used to pull eligible items into the window.
+## How an item gets into a day (Kairos v2)
 
-TimeBlocks (template nodes)
+Kairos considers two sources of work:
+
+1. **The chosen day template.** Every direct child of the day template is a candidate, except anchors (placed separately), windows, and `free`/`buffer` blocks.
+2. **The item library** (`user/habits`, `user/tasks`, `user/routines`, `user/subroutines`, `user/microroutines`, `user/timeblocks`). An item from these folders is a candidate only if at least one of these is true:
+   - `frequency` applies to the day;
+   - it has a `due_date`;
+   - it has a `deadline`;
+   - a goal it serves is active, or a commitment that counts it is unmet (see [Goals and commitments](#goals-and-commitments)).
+
+   An item with none of these never reaches the plan, even if a window's tag filter would match it.
+
+Library items are always skipped when they are bad habits (`polarity: bad`), anchors (`reschedule: never`), sleep blocks, windows, or `free`/`buffer` blocks.
+
+### Recurrence
+
+- `frequency` (string or list): `daily`, a weekday name (`monday` ... `sunday`), or several, as a list or a comma/slash string (`monday, wednesday`). `weekly` currently matches **every** day: Kairos does not track which day of the week a weekly item belongs to, so give weekday names instead.
+
+### Due dates
+
+- `due_date` (YYYY-MM-DD): Brings the item into scope and adds urgency: overdue or today +20, tomorrow +10, within 3 days +5 (at the shipped weights in `scheduling_priorities.yml`).
+- `deadline` (YYYY-MM-DD): Same, stronger: +25 / +12 / +6.
+
+Note: Kairos removes an item only if it was completed **today** (from the day's completion log). Completing a one-off task with `complete` or `mark` does not change its `status` or `due_date`, so a task completed yesterday with a past due date is scheduled again today with the overdue bonus. Clear the `due_date` (or set `status: archived`) on finished one-off tasks until this is fixed.
+
+### Skipped today
+
+An item marked skipped today is not handed back by `today reschedule` for the rest of the day.
+
+## Day templates
+
+- `days` (list or string): Weekday names the template is eligible for (`[monday, tuesday]`). A template with no `days` is eligible every day.
+- `status_requirements` (map): See [Status](#status). On a day template it makes the template a closer or worse match for today.
+- `children` (list): The template's structure. `sequence` at the root of a template is also read for ordering. Kairos v2 does not expand `items`.
+
+How the template is chosen:
+
+1. Templates eligible for the weekday are collected from `user/days/`.
+2. They are ranked by: the `prioritize:` preferences passed to `today`, then closest status match, then most matched status dimensions, then **name**.
+3. The first wins, so with several eligible templates and no status requirements, the alphabetically first one is used. `template:<name>` on the command line forces one.
+
+### Inheritance
+
+A template child takes these properties from its parent template unless it sets its own: `category`, `theme`, `status_requirements`, `priority`, `priority_property`, `happiness`, `planet`, `days`, `tags`, `window`, `filters`. The item file the child points at can override the parent, and the child node in the template can override both.
+
+## Fixed times, anchors, windows
+
+### Times
+
+- `start_time` / `end_time` (HH:MM): The fields Kairos places by.
+- `ideal_start_time` / `ideal_end_time`, `start` / `end`: Accepted as fallbacks when `start_time` / `end_time` are missing; the Day Builder and Routine Builder write `ideal_*`. An explicit `start_time` / `end_time` always wins.
+
+A template node with a start and an end (or a start and a duration) that is not an anchor, window, free or buffer block is placed as a **fixed-time block** at that time.
+
+### Anchors
+
+- `reschedule: never`: The only rule that makes something a hard anchor in Kairos v2. `reschedule: false` does not. Anchors are placed first and are never moved, trimmed or cut. Kairos v2 does not check authored anchors against each other, so keep them from overlapping; a hard injection that overlaps an anchor is rejected unless it is forced.
+
+Anchors come only from the chosen day template (at any depth under `children`) and from hard injections. A library item marked `reschedule: never` that is not in the day template is not scheduled at all. `anchor "<name>" scope:item` writes exactly this onto the item file, so only use it on items that are in your day template.
+
+### Windows
+
+A window is a template node that Kairos fills with the best-ranked matching candidates.
+
+- `window: true`
+- `start` / `end` (HH:MM), or `start_time` / `end_time`, or `ideal_start_time` / `ideal_end_time`.
+- `filters` (map): Only two keys are honored:
+  - `tags`: a candidate must share at least one tag.
+  - `category`: a candidate's category must match exactly.
+
+  Other filter keys (type, priority, custom properties) are not applied.
+- `category` on the window itself (without a filter) is a soft preference: matching items score higher but others can still fill it.
+
+### Timeblocks
+
 - `type: timeblock`
-- `subtype: buffer|category|free`
-- `duration`: Total block time.  
-Note: timeblock subtypes are documented but not fully implemented in scheduling logic yet.
+- `subtype`: Only `free` and `buffer` have scheduler meaning (the same words as tags work too). A `free` block is intentionally open time; a `buffer` block absorbs overflow. Other subtypes (`category`, `break`) are treated as ordinary blocks.
+- `duration`: Total block time.
 
-Completion Logging
-- `due_date` (YYYY-MM-DD): Used in quick wins and importance scoring.
-- `deadline` (YYYY-MM-DD): Used in quick wins and importance scoring.
-- `happiness` (string or list): Used in importance scoring via `map_of_happiness.yml`.
-- `environment` (string): Placeholder in importance scoring (environment matching is TODO).
+## Status
 
-Notes
-- Properties are case-insensitive when read from YAML, but consistency is recommended.
+- `status_requirements` (map): Status dimension to an allowed value or list of values, for example `{energy: [high, medium], health: good}`. Dimensions and their value order come from `user/settings/status_settings.yml` and `user/settings/<dimension>_settings.yml`.
+
+How Kairos compares: each value has a rank in its settings file; the distance is the rank difference times the dimension's weight, summed over the dimensions the item names. `place` is skipped (deferred in v2). Unknown values are ignored.
+
+What the distance changes:
+
+- **Day template choice**: closest match wins (see above).
+- **Lighter versions**: an item that does not fit today is swapped for its `mini_of` version when that fits better (see below).
+- **What is cut first** when the day overflows: a poor fit makes an item easier to sacrifice.
+- **`inject:next`** placement prefers good fits.
+
+What it does **not** do: it is not a filter. If no lighter version exists, an item whose requirements do not match today is still placed in windows and gaps like any other.
+
+Legacy top-level status keys (for example `energy: high` directly on an item) are not read by Kairos v2; use `status_requirements`.
+
+## Trimming and cutting
+
+When the day overflows, Kairos only shortens or removes items that allow it. Everything else is protected by default.
+
+- `trim: allow` together with `max_trim_percent: <0-100>`: The item may be shortened by up to that share, never below a minimum length. `trim: allow` with no `max_trim_percent` is treated as not trimmable.
+- `cut: allow`: The item may be removed entirely.
+
+Order of relief:
+
+1. Items that did not fit are swapped for a shorter authored lighter version (`mini_of`), if one exists.
+2. Trims, least important first.
+3. Cuts, least important first.
+4. Whatever still does not fit is reported, not forced in.
+
+"Least important" is the lowest keep-score: category, priority, happiness, urgency, goal and commitment pressure, and status fit (a poor fit lowers it). Trimming and cutting can be switched off per run (`repair_trim`, `repair_cut` in the Today widget).
+
+## Goals and commitments
+
+Full detail and the numbers: `docs/scheduling/direction_goals_commitments.md`.
+
+- `goal` (string, on a task or habit): The goal this item serves. Also read: a goal's `supporting_habits`, a milestone's `criteria` / `links`, and a task's `project` when that project has a `goal`.
+- On a goal: `target_date`, `priority`, `status` (completed, archived, cancelled and on-hold goals push nothing).
+- On a commitment: `rule: {kind: frequency, times: N, period: day|week|month}` and `targets: [{type: habit, name: ...}]`. "Never" commitments are not scheduled.
+- `mini_of` (string, on the lighter item) or `mini_variant` (string, on the full item): Links a full item to a lighter version. The lighter one is used on days the full one's `status_requirements` do not fit, and when the full one does not fit in the day (if the lighter one is shorter). It inherits the goal and commitment pressure and counts toward the commitment.
+
+## Scoring inputs
+
+- `happiness` (string or list): Keys from `user/settings/map_of_happiness.yml`; the best-ranked one adds to the score.
+- `category`, `priority`, `due_date`, `deadline`, goal and commitment pressure: see above.
+- The weight of each factor is set in `user/settings/scheduling_priorities.yml`. (`today ... prioritize:key=value` only steers which day template is chosen; it does not change these weights.)
+
+## Not read by Kairos v2
+
+These are still written by some builders and wizards, and were used by the archived v1 scheduler, whose code in `commands/today.py` is unreachable. Kairos v2 ignores them.
+
+| Property | Written by | Notes |
+| --- | --- | --- |
+| `essential` | Life Setup wizard, Sleep Settings widget, `template` command | Only read by the sleep-conflict check (`sleep_gate.py`), where it marks a sleep block as fixed. Not used to protect items from cuts; use the defaults above (everything is protected unless `cut: allow`). |
+| `flexible` | Template Builder, Life Setup, Sleep Settings | No effect. |
+| `absorbable` | Life Setup, Sleep Settings | Recorded on free/buffer blocks; no effect on placement. |
+| `depends_on` | Template Builder | Kairos v2 has no dependency ordering. |
+| `variants` | | Use `mini_of` / `mini_variant` instead. |
+| `auto_inject` | | Use a manual injection, or `inject:next`. |
+| `reschedule_policy` | | No effect. |
+| `environment` | | Deferred in v2. |
+
+## Notes
+
 - Defaults can be set per item type in `user/settings/<type>_defaults.yml`.
-- Project/goal planning fields like `state`, `stage`, `priority`, and `target_date` are supported in dashboard planning views.
-- `stage` is treated as a flexible text field in current dashboard flows (no hard-enforced global enum).
-
+- Project and goal planning fields like `state`, `stage`, `priority` and `target_date` are supported in dashboard planning views. `stage` is free text.

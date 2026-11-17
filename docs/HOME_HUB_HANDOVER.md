@@ -53,7 +53,7 @@ Full suite (excluding `tests/test_kairos.py`, which tests the archived v1 schedu
 | Day and week templates: anchors, windows, timeblocks, routines | Yes |
 | Habits, including chores (a chore is a habit with `chore: true`) | Yes, as recurring items. Chores get no special treatment. |
 | Tasks | Yes, but only those with a due date or deadline, plus anything in the template |
-| Status (energy, health, place, …) | Yes: picks the best-matching day template and filters items with `status_requirements` / `place` |
+| Status (energy, health, …) | Partly: picks the best-matching day template, swaps in a lighter version (`mini_of`) when an item's `status_requirements` do not fit, and makes poor fits the first to be cut. It does **not** filter: with no lighter version, a non-matching item is still placed. `place` is ignored (deferred in v2). |
 | Priority, category, due date, deadline, tags (in window filters), map of happiness | Yes, for ranking and window filling |
 | Completed and skipped blocks today | Yes |
 | Goals and milestones | Yes, since this branch: linked work is brought into scope and ranked higher as the date nears. A goal with nothing linked to it changes nothing. |

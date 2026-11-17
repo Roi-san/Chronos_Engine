@@ -4,7 +4,7 @@ This guide explains how Chronos fits together so you can extend it confidently.
 
 ## Runtime Overview
 
-- CLI Entrypoint — `modules/console.py`
+### 1. CLI Entrypoint (`modules/console.py`)
   - Adds project paths, sets UTF-8, and loads `commands/*.py` dynamically.
   - Parses interactive input, CLI args, and `.chs` scripts (supports nested `if/elseif/else/end` and loop blocks).
   - Uses `modules/variables.py` for in-memory variables and token expansion (e.g., `@nickname`, `@status_energy`).
@@ -17,21 +17,34 @@ Items are the atoms of Chronos. They are stored as YAML files in the `user/` dir
 - **Fractal**: Items can nest indefinitely. The `Scheduler` creates a flattened view for execution but preserves the hierarchy for planning.
 - **Defaults**: Each item type has a `_defaults.yml` (e.g., `task_defaults.yml`) that defines its initial state.
 
-### 3. The Scheduler
-- **Command Router**: `commands/today.py` dispatches three modes:
-  - active Kairos (`today`, `today reschedule`)
-  - explicit Kairos tooling (`today kairos ...`)
-  - legacy fallback (`today legacy ...`)
-- **Kairos Engine**: `modules/scheduler/kairos.py` is the active daily scheduler.
-  - Loads runtime context (status, settings, trends, completion logs)
-  - Selects template/windows with strict place+status compatibility
-  - Gathers/filter/scores executable backlog from `chronos_core.db`
-  - Constructs timeline (anchors, injections, windows, gaps, synthetic buffers/breaks)
-  - Runs overlap repair + dependency shift passes
-  - Emits decision logs in `user/logs/kairos_decision_log_*`
-- **Weekly Planner**: `modules/scheduler/weekly_generator.py` powers `today kairos week`.
-- **Compatibility Layer**: Active Kairos output is adapted into legacy schedule row shape in `commands/today.py` so existing dashboard/API/manual-modification flows continue to work.
-- **Manual Modifications**: Persisted in `user/schedules/manual_modifications_YYYY-MM-DD.yml` and translated into Kairos context (notably manual `inject` actions).
+### 3. The Scheduler (Kairos v2)
+- **Command Router**: `commands/today.py`.
+  - `today`, `today reschedule`: run Kairos v2 and save the day (the active path).
+  - `today kairos ...`: a shadow run with explicit options; writes `user/schedules/schedule_<date>_kairos_v2_shadow.yml` and does not replace the day.
+  - `today kairos week`: disabled; it prints that weekly generation is deferred until a v2-native replacement exists.
+  - `today legacy ...`: prints that the legacy scheduler is archived and stops. The old inline scheduler code further down `today.py` ("Mode C") is unreachable.
+- **Kairos Engine**: `modules/scheduler/kairos_v2.py`, class `KairosV2Scheduler`. `generate_schedule()` runs these phases in order:
+  1. `gather_information`, `model_reality`: settings, current status, completion logs for the day, manual injections and adjustments.
+  2. `model_sleep`, `commit_sleep`: find the sleep anchor and the sleep boundary.
+  3. `ensure_week_context`, `select_week_template`, `derive_week_days`, `select_day_template`: pick the day template (eligible for the weekday, then `prioritize:` preferences, then closest status match, then name).
+  4. `commit_anchor_skeleton`: place `reschedule: never` anchors from the template and hard injections.
+  5. `model_day_budget`: how much flexible time is left before sleep.
+  6. `build_candidate_universe`: template children plus library items that recur today, have a due date or deadline, or are pushed by a goal or commitment (`direction.py`).
+  7. `remove_reality_impossible_candidates`: drop what was completed or skipped today; swap in lighter versions (`mini_of`) where today's status does not fit.
+  8. `shape_week`, `populate_day_and_windows`, `narrow_window_candidate_pools`, `select_window_contents`: lay out fixed-time structure and fill windows by tag/category filter and score.
+  9. `handle_gaps_buffers_and_recovery`, `build_runtime_helper_windows`, `place_remaining_structure`: fill gaps, open helper windows for urgent work the template has no place for ("Deadline Window", "Due Window", "Commitment Window", "Goal Window", "Manual Opportunity Window", "Best Next Window" for `inject:next`), place remaining items.
+  10. `run_pressure_relief_pipeline`: on overflow, lighter versions, then trims, then cuts, only on items that allow them.
+  11. `fill_quick_wins`, `finalize_conceptual_schedule`, `build_timer_handoff`, `persist_decision_log_artifact`.
+- **Inputs**: Kairos v2 reads the YAML files under `user/` directly (`days`, `weeks`, `habits`, `tasks`, `routines`, `subroutines`, `microroutines`, `timeblocks`, goals, milestones, commitments, `settings`). It does not read the SQLite mirrors, and trend input is a placeholder that does not affect planning yet. Which item properties it honors: `docs/reference/item_properties.md`.
+- **Supporting modules** in `modules/scheduler/`:
+  - `direction.py`: goal and commitment pressure (`docs/scheduling/direction_goals_commitments.md`).
+  - `runtime.py`: the saved day format and the timer's execution plan.
+  - `sleep_gate.py`: the sleep-conflict check that runs before commands which would schedule into sleep.
+  - `v1.py`: template and schedule-file helpers. Kairos v2 uses its template readers; `trim`, `cut`, `shift`, `stretch`, `split`, `merge`, `anchor`, `change` and `mark` use its schedule-file editors.
+  - `kairos.py`, `weekly_generator.py`: archived. Both only raise an error pointing at the archive.
+- **Output**: `user/schedules/schedule_YYYY-MM-DD.yml` (the day runtime payload) and decision logs in `user/logs/kairos_v2_decision_log_*.md` (`kairos_v2_decision_log_latest.md` is the most recent).
+- **Compatibility Layer**: Kairos output is adapted into the legacy schedule row shape in `commands/today.py` so the dashboard, API and schedule-edit commands keep working.
+- **Manual Modifications**: Persisted in `user/schedules/manual_modifications_YYYY-MM-DD.yml`; `today.py` turns them into Kairos injections and adjustments on the next run.
 
 ### 4. Conditions Engine (`modules/conditions.py`)
 A recursive descent parser that evaluates logic strings in scripts and triggers.
@@ -41,22 +54,22 @@ A recursive descent parser that evaluates logic strings in scripts and triggers.
 
 ### 5. Sequence System (`modules/sequence`)
 The "Long-Term Memory" of Chronos.
-- **Mirroring**: Mirrors the YAML data into SQLite databases (`chronos_behavior.db`, `chronos_journal.db`) for performant querying.
+- **Mirroring**: Mirrors the YAML data into SQLite databases (`chronos_core.db`, `chronos_matrix.db`, `chronos_events.db`, `chronos_behavior.db`, `chronos_journal.db`) for fast querying by the dashboard, reviews and agents. Kairos v2 does not read them.
 - **Trends**: Analyzes history to build `chronos_trends.db` and generates a `trends.md` digest.
 - **Automation**: Runs automatically via `automation.py` hook during the nightly rollover.
 - **Cleanup Integration**: The `clear` command provides surgical control over Sequence Mirrors:
   - `clear cache` - Deletes all `.db` files, forcing full rebuild
   - `clear db:<name>` - Deletes specific mirror (e.g., `chronos_matrix.db`), auto-rebuilds on next access
   - `clear registry:<name>` - Clears in-memory registry caches (wizards, themes, etc.) to force YAML reload
-  - See [Admin Tools](../Features/Admin_Tools.md) for full cleanup reference
+  - See [Admin Tools](../features/admin_tools.md) for full cleanup reference
 
-- Listener — `modules/listener/listener.py`
+### 6. Listener (`modules/listener/listener.py`)
   - Monitors time for alarms/reminders, triggers sounds (pygame.mixer), handles timer ticks.
   - Can execute scripts and target actions (e.g., complete task on trigger).
 
-- Dashboard — `utilities/dashboard`
+### 7. Dashboard (`utilities/dashboard`)
   - Server (`server.py`) serves assets and JSON/YAML APIs (ThreadingHTTPServer over plain HTTP).
-  - UI is plain ES modules + a small loader (`core/runtime.js`) to mount views (`Calendar`, `TemplateBuilder`, `Cockpit`), widgets (Scheduler/Today widget, Item Manager, Variables, Terminal, Habit Tracker, Goal Tracker, Commitments, Rewards, Achievements, Milestones, Notes, Journal, Profile, Review, Timer, Settings, Clock, Status, Debug), and dock gadgets (`utilities/dashboard/gadgets/*`).
+  - UI is plain ES modules + a small loader (`core/runtime.js`) to mount views (`Home` is the default landing page; also `Calendar`, `TemplateBuilder`, `Cockpit` and others under `utilities/dashboard/views/`), widgets (Scheduler/Today widget, Item Manager, Variables, Terminal, Habit Tracker, Goal Tracker, Commitments, Rewards, Achievements, Milestones, Notes, Journal, Profile, Review, Timer, Settings, Clock, Status, Debug), and dock gadgets (`utilities/dashboard/gadgets/*`).
   - Widgets mount via attributes, e.g., `data-widget="Notes"`, and export `mount(el, context)`. Cockpit panels register via `window.__cockpitPanelRegister` and render inside the drag-and-drop canvas.
 
 ## Dashboard Architecture
