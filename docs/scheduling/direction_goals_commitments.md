@@ -95,7 +95,7 @@ Goal and commitment pressure therefore do two jobs: they rank work (above), and 
 
 ## Limits
 
-- **A full version with a fixed slot in the day template is not swapped.** The scale-down works on flexible candidates. A "Gym 18:00" block authored in the template stays as it is on a sick day.
+- ~~A full version with a fixed slot in the day template is not swapped.~~ Fixed since 2026-11-17 (`docs/scheduling/status_scale_down_design.md`, step 2): a "Gym 18:00" slot becomes its lighter version at 18:00 on a day that does not fit, or is freed.
 - **Lower status is the only trigger.** There is no notion of "the gym is closed" or "I am travelling" beyond the status dimensions, and `place` is not used in the fit calculation yet (Kairos defers it).
 - **"Never" commitments** ("no doomscrolling") are not scheduled; there is nothing to place.
 - **Nothing happens when a period ends unmet** apart from the extra push next period. See below.

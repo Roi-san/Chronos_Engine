@@ -53,7 +53,7 @@ Full suite (excluding `tests/test_kairos.py`, which tests the archived v1 schedu
 | Day and week templates: anchors, windows, timeblocks, routines | Yes |
 | Habits, including chores (a chore is a habit with `chore: true`) | Yes, as recurring items. Chores get no special treatment. |
 | Tasks | Yes, but only those with a due date or deadline, plus anything in the template |
-| Status (energy, health, …) | Yes: picks the best-matching day template; on items, swaps in a lighter version (`mini_of`) when today falls short, keeps short items within one step of grace, urgent ones, and ones whose goal/commitment/priority outweighs the strain, and saves the rest for a better day (since `home-hub-fixes`, 2026-11-17; `docs/scheduling/status_scale_down_design.md`). Fixed slots in the day template are not scaled down yet. `place` is ignored (deferred in v2). |
+| Status (energy, health, …) | Yes: picks the best-matching day template; on items, swaps in a lighter version (`mini_of`) when today falls short, keeps short items within one step of grace, urgent ones, and ones whose goal/commitment/priority outweighs the strain, and saves the rest for a better day (since `home-hub-fixes`, 2026-11-17; `docs/scheduling/status_scale_down_design.md`). Fixed slots in the day template follow the same rule at their own time: lighter version in the slot, or the slot is freed. `place` is ignored (deferred in v2). |
 | Priority, category, due date, deadline, tags (in window filters), map of happiness | Yes, for ranking and window filling |
 | Completed and skipped blocks today | Yes |
 | Goals and milestones | Yes, since this branch: linked work is brought into scope and ranked higher as the date nears. A goal with nothing linked to it changes nothing. |
@@ -66,7 +66,7 @@ Appointments are the remaining gap between "what my life contains" and "what Kai
 ## Shaky bits that need attention
 
 ### For the friend, highest impact first
-1. **The goal and commitment weights are a first calibration.** They were tuned against one fake life and the shipped settings (`docs/scheduling/direction_goals_commitments.md` has the numbers). They need a few real weeks of use, and they are two rows in `scheduling_priorities.yml` to adjust. Also: a full version with a fixed slot in the day template is not scaled down; nothing fires when a commitment's period ends unmet; appointments still do not block time.
+1. **The goal and commitment weights are a first calibration.** They were tuned against one fake life and the shipped settings (`docs/scheduling/direction_goals_commitments.md` has the numbers). They need a few real weeks of use, and they are two rows in `scheduling_priorities.yml` to adjust. Also: nothing fires when a commitment's period ends unmet; appointments still do not block time.
 2. **Tasks with no due date are never considered**, even if a window's tag filter matches them (`build_candidate_universe`). `task_defaults.yml` sets a due date of tomorrow, which hides this for tasks made with `new`.
 3. **Zero durations.** `generic_handle_new` writes `duration: 0`, and the Brain Dump wizard has no duration field, so its tasks can never be placed. Home warns and offers "Give them 30 min"; a default or a wizard field would fix it at the source.
 4. **A missed morning routine is re-queued into the afternoon** as one block. Needs a rule such as "do not re-queue after HH:MM".

@@ -74,7 +74,7 @@ A template child takes these properties from its parent template unless it sets 
 - `start_time` / `end_time` (HH:MM): The fields Kairos places by.
 - `ideal_start_time` / `ideal_end_time`, `start` / `end`: Accepted as fallbacks when `start_time` / `end_time` are missing; the Day Builder and Routine Builder write `ideal_*`. An explicit `start_time` / `end_time` always wins.
 
-A template node with a start and an end (or a start and a duration) that is not an anchor, window, free or buffer block is placed as a **fixed-time block** at that time.
+A template node with a start and an end (or a start and a duration) that is not an anchor, window, free or buffer block is placed as a **fixed-time block** at that time. On a day that falls short of its `status_requirements` (on the node or on the item it points at), the same scale-down rule as for flexible items applies, keeping the start time: the lighter version takes the slot for its own length, or the slot is kept (within grace, urgent, important) or freed so other work can use the time. See [Status](#status).
 
 ### Anchors
 
@@ -122,7 +122,7 @@ For an item, only being **worse** than it needs counts; being better than needed
 
 Strain = sum over dimensions of (steps short - grace) x dimension weight, where the top-ranked dimension weighs 1.0 and the rest fall by rank (shipped: Health 1.0, Energy 0.71, Focus 0.43). Importance = the strongest of the item's commitment pressure, goal pressure and own `priority` (critical 1.0, high 0.7, medium 0.4), each times its weight in `scheduling_priorities.yml` / 5 (Commitment Pressure, Goal Alignment, Priority Property).
 
-Items added by hand (`today inject "<name>"`) and anchors are never removed by status. What happened is in `schedule.status_scale_down` (`swapped`, `kept` with the reason, `saved` with strain and importance). Full design, worked examples and decisions: `docs/scheduling/status_scale_down_design.md`.
+Fixed slots in the day template follow the same rule at their own time (see [Fixed times](#fixed-times-anchors-windows)). Items added by hand (`today inject "<name>"`) and anchors are never removed by status. What happened is in `schedule.status_scale_down` (`swapped`, `kept` with the reason, `saved` with strain and importance). Full design, worked examples and decisions: `docs/scheduling/status_scale_down_design.md`.
 
 The same one-way distance also sets what is cut first when the day overflows (a poor fit is easier to sacrifice) and ranks `inject:next`.
 

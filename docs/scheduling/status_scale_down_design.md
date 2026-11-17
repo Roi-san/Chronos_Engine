@@ -1,6 +1,6 @@
 # Status-aware scale-down: design
 
-Status (branch `home-hub-fixes`): design confirmed by the pilot on 2026-11-17. **Step 1 (flexible items) implemented**; step 2 (fixed template slots) and step 3 (Home) not yet. See the [implementation log](#implementation-log).
+Status (branch `home-hub-fixes`): design confirmed by the pilot on 2026-11-17. **Step 1 (flexible items) and step 2 (fixed template slots) implemented**; step 3 (Home) not yet. See the [implementation log](#implementation-log) and [future ideas](#future-ideas).
 
 Related: `docs/scheduling/direction_goals_commitments.md` (goal and commitment pressure, the existing lighter-version swap), `docs/reference/item_properties.md` (what Kairos reads today).
 
@@ -54,6 +54,7 @@ Each dimension's values are ordered in `user/settings/<dimension>_settings.yml` 
 | 10 | Does an item's own `priority` count as importance? | Yes: critical / urgent / highest 1.0, high 0.7, medium / normal / moderate 0.4, times the Priority Property weight / 5. |
 | 11 | Close calls? | Lean toward keeping: kept when importance >= strain - 0.1. |
 | 12 | Order of work | 1) flexible items, 2) fixed template slots, 3) Home. Check in with the pilot after each. |
+| 13 | A fixed slot with no lighter version that is saved? | Free the time, so other work that suits the day, or goals and commitments that are behind, can use it (pilot, 2026-11-17). |
 
 ## Proposed rule
 
@@ -116,9 +117,18 @@ Until then, the order of dimensions in `status_settings.yml` is how importance i
 - Kept-despite and urgent cases: a `status_note` on the candidate.
 - Home: "Saved for a better day" list with Add back; the existing "Lighter version of ..." note; a "kept although ..." note.
 
+## Future ideas
+
+Raised by the pilot, not built:
+
+- **Fill freed time with what suits the day.** A slot freed by status (or any gap) should go to work that fits today's mood and energy, or to goals and commitments that are falling behind. What exists: freed time becomes an ordinary gap; gap fill ranks by score, which includes goal and commitment pressure (so work behind on a commitment is preferred, and helper windows open for strong pressure), and items that do not fit today were already swapped or saved. What is missing: a positive preference for items that *suit* today (for example items authored for low energy on a low day get no bonus; fit only ever subtracts).
+- **Move a slot instead of shrinking it** (decision 7): if the full version cannot happen at its time but a later free, un-anchored time exists, offer it there.
+- **Numeric status weights**: see "Adding weights later".
+- **A penalty or trigger when a commitment period ends unmet** (`direction_goals_commitments.md`, "Rewards and consequences today").
+
 ## Not in this change
 
-- Moving a fixed slot to a later free time (decision 7, deferred).
+- Moving a fixed slot to a later free time (decision 7, deferred; see Future ideas).
 - Steps inside a routine placed as one block are not checked one by one.
 - Numeric status weights (see above).
 - Place.
@@ -165,3 +175,29 @@ Verification:
 - 7-day rich fake-life plan (no status changes across days): identical before and after.
 - 7-day status-heavy week (good, medium, low, sick, exhausted, excellent, no status; items with and without requirements, lighter versions, goal, deadline, a low-energy item): items without requirements are placed on exactly the same days before and after; the only removals are items with requirements, each with the reason the rule gives (Wednesday: File taxes saved, deadline tomorrow; Friday exhausted: Long run, Deep refactor, Write launch post saved; Thursday: File taxes kept as urgent).
 - The pilot's real data has no `status_requirements` yet, so nothing changes for them until they author some.
+
+Committed as `4b2c818`.
+
+### Step 2: fixed template slots (2026-11-17)
+
+Problem found while writing the tests: a fixed slot ("Gym 18:00", a direct child of the day template) is also a flexible candidate, so step 1 (and the lighter-version swap before it) already swapped it in the candidate list. The slot itself stayed: the plan showed Gym at 18:00 **and** Mobility in some gap (08:10). Present since lighter-version swaps were added on `home-hub`.
+
+Code, all in `modules/scheduler/kairos_v2.py`:
+
+| Where | Change |
+| --- | --- |
+| `KairosV2RunState.direction_by_identity` | New field: goal/commitment signals, filled in `build_candidate_universe`, so later phases can use them. |
+| `populate_day_and_windows` | Runs `_scale_down_fixed_time_nodes` on the active fixed-time list right after it is built, before every reader (covered-by-structure, `_derive_emergent_gaps`, `place_remaining_structure`, `_build_conceptual_blocks`). |
+| `_scale_down_fixed_time_nodes` | New. Per slot, the step-1 rule with the step-1 functions (`_attach_candidate_status_fit`, `_resolve_authored_mini_variant`, `_status_unfit_verdict`): unchanged if it fits / has no requirements / was completed or skipped today; lighter version takes the slot at the same start for its own length (capped at the slot); kept with `status_note`; or removed (saved), which leaves a gap. |
+| `_note_fixed_slot_status` | New. Records the decision with `fixed_slot` ("HH:MM-HH:MM") in `schedule.status_scale_down`, merged into the step-1 row of the same item; a saved slot whose item was not a candidate is also added to `impossible_candidates`. Phase notes: `fixed_slot_status_scale_down`. |
+
+Why the duplicate disappears: the lighter version is now itself a fixed slot, so the existing covered-by-structure pass removes its flexible copy.
+
+Tests: `tests/test_kairos_v2_status_fixed_slots.py`, 14 tests. Written before the code: 7 failed (swap in place, own length, no duplicate, requirement on the slot, record, freed slot, freed time is a gap), 7 passed. After: 14 passed.
+
+Verification:
+
+- Full suite: 269 passed; the same 2 pre-existing failures.
+- Scenario table: only the fixed-slot row changed (sick day, slot needs energy high, no lighter version: Gym -> freed).
+- Rich 7-day plan and the status-heavy week (no fixed slots with requirements): identical to step 1.
+- A fixed-slot week (Deep work 09:00-11:00 needing focus, Gym 18:00 needing health and energy, with a lighter version; goal, commitment and plain tasks): Wednesday and Thursday changed from "Gym 18:00 + Mobility 08:00" to "Mobility 18:00-18:20"; Friday (focus absent) freed Deep work's 09:00-11:00; Monday (good day) unchanged.

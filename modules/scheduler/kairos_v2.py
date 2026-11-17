@@ -97,6 +97,9 @@ class KairosV2RunState:
     reality: Dict[str, Any] = field(default_factory=dict)
     sleep: Dict[str, Any] = field(default_factory=dict)
     schedule: Dict[str, Any] = field(default_factory=dict)
+    # Goal/commitment signals by candidate identity (direction.load_direction),
+    # kept for phases after the candidate universe (fixed-slot scale-down).
+    direction_by_identity: Dict[str, Any] = field(default_factory=dict)
 
 
 class KairosV2Scheduler:
@@ -857,6 +860,7 @@ class KairosV2Scheduler:
         except Exception as exc:
             direction = {"by_identity": {}, "goals": [], "commitments": [], "error": str(exc)}
         direction_by_identity = direction.get("by_identity") or {}
+        state.direction_by_identity = dict(direction_by_identity)
 
         # Chosen template children are included by default, except for anchors
         # that have already been committed into the skeleton.
@@ -1328,6 +1332,152 @@ class KairosV2Scheduler:
         best = max(value for _, value in rows)
         return best, [{"source": source, "value": round(value, 3)} for source, value in rows if value > 0]
 
+    def _scale_down_fixed_time_nodes(
+        self,
+        nodes: List[Dict[str, Any]],
+        state: KairosV2RunState,
+    ) -> List[Dict[str, Any]]:
+        """
+        Status scale-down for fixed slots in the day template (design step 2).
+
+        The same rule as `_scale_down_for_status`, applied to authored
+        fixed-time nodes ("Gym 18:00"), keeping the slot's start time:
+
+        - fits, no requirements, or already completed/skipped today: unchanged;
+        - a usable lighter version: it takes the slot at the same start, for
+          its own length (never longer than the slot); the rest becomes free;
+        - otherwise `_status_unfit_verdict`: kept (with `status_note`) or saved,
+          and a saved slot is removed so its time becomes a gap for other work.
+
+        Every later reader of the fixed-time list (covered-by-structure, gaps,
+        placement, conceptual blocks) sees the result. Records go into
+        `schedule.status_scale_down` with a `fixed_slot` ("HH:MM-HH:MM"),
+        merged with the step-1 record of the same item when there is one.
+        """
+        summary = state.schedule.setdefault("status_scale_down", {"swapped": [], "kept": [], "saved": []})
+        filtered = state.schedule.get("reality_filtered_candidates")
+        filtered = filtered if isinstance(filtered, dict) else None
+        closed_names = self._closed_names_before_now(state.target_date, state.now)
+        notes: Dict[str, List[str]] = {"swapped": [], "kept": [], "saved": []}
+        out: List[Dict[str, Any]] = []
+
+        for node in nodes:
+            if not isinstance(node, dict) or node.get("start_minutes") is None:
+                out.append(node)
+                continue
+            candidate = self._normalize_candidate(node, source="fixed_time_slot", reasons=["fixed_time_slot"])
+            identity = candidate.get("identity")
+            if str(candidate.get("name") or "").strip().lower() in closed_names:
+                out.append(node)
+                continue
+            signal = state.direction_by_identity.get(identity)
+            if signal:
+                candidate["direction"] = signal
+            candidate = self._attach_candidate_status_fit(candidate, state)
+            fit = candidate.get("local_status_fit") if isinstance(candidate.get("local_status_fit"), dict) else {}
+            if not fit.get("has_explicit_requirements") or int(fit.get("max_short") or 0) <= 0:
+                out.append(node)
+                continue
+
+            slot = f"{node.get('start_time')}-{node.get('end_time')}"
+            distance = float(fit.get("weighted_distance") or 0.0)
+            mini = self._resolve_authored_mini_variant(candidate)
+            if isinstance(mini, dict) and str(mini.get("name") or "").strip().lower() not in closed_names:
+                mini = self._attach_candidate_status_fit(mini, state)
+                mini_fit = mini.get("local_status_fit") if isinstance(mini.get("local_status_fit"), dict) else {}
+                mini_distance = float(mini_fit.get("weighted_distance") or 0.0)
+                start = int(node["start_minutes"])
+                length = min(int(mini.get("duration_minutes") or 0), int(node.get("duration_minutes") or 0))
+                if mini_distance <= distance and length > 0:
+                    out.append(
+                        {
+                            "name": mini.get("name"),
+                            "type": mini.get("type"),
+                            "identity": mini.get("identity"),
+                            "category": mini.get("category"),
+                            "tags": list(mini.get("tags") or []),
+                            "mini_of": mini.get("mini_of"),
+                            "duration": length,
+                            "duration_minutes": length,
+                            "start_minutes": start,
+                            "end_minutes": start + length,
+                            "start_time": self._minutes_to_hm(start),
+                            "end_time": self._minutes_to_hm(start + length),
+                            "top_level_parent_name": node.get("top_level_parent_name"),
+                            "top_level_parent_type": node.get("top_level_parent_type"),
+                            "children": [],
+                            "scaled_down_from": {
+                                "name": candidate.get("name"),
+                                "identity": identity,
+                                "fixed_slot": slot,
+                                "status_distance": distance,
+                                "mini_status_distance": mini_distance,
+                            },
+                        }
+                    )
+                    self._note_fixed_slot_status(
+                        summary.setdefault("swapped", []),
+                        {
+                            "from": candidate.get("name"),
+                            "to": mini.get("name"),
+                            "status_distance": distance,
+                            "mini_status_distance": mini_distance,
+                        },
+                        slot,
+                        match_keys=("from", "to"),
+                    )
+                    notes["swapped"].append(str(candidate.get("name")))
+                    continue
+
+            verdict = self._status_unfit_verdict(candidate, fit, state)
+            keep = bool(verdict.pop("keep"))
+            record = {"name": candidate.get("name"), "identity": identity, **verdict}
+            if keep:
+                kept_node = dict(node)
+                kept_node["status_note"] = verdict
+                out.append(kept_node)
+                self._note_fixed_slot_status(summary.setdefault("kept", []), record, slot)
+                notes["kept"].append(str(candidate.get("name")))
+                continue
+
+            self._note_fixed_slot_status(summary.setdefault("saved", []), record, slot)
+            notes["saved"].append(str(candidate.get("name")))
+            if filtered is not None:
+                impossible = filtered.setdefault("impossible_candidates", [])
+                already = any(
+                    row.get("identity") == identity and row.get("impossible_reason") == "saved_for_better_day"
+                    for row in impossible
+                )
+                if not already:
+                    impossible.append(
+                        {**candidate, "impossible_reason": "saved_for_better_day", "status_verdict": verdict, "fixed_slot": slot}
+                    )
+                    filtered["impossible_count"] = len(impossible)
+
+        state.phase_notes["fixed_slot_status_scale_down"] = notes
+        return out
+
+    def _note_fixed_slot_status(
+        self,
+        rows: List[Dict[str, Any]],
+        record: Dict[str, Any],
+        slot: str,
+        *,
+        match_keys: tuple[str, ...] = ("identity",),
+    ) -> None:
+        """
+        Record a fixed-slot decision, merged into the step-1 row for the same item.
+
+        A direct child of the day template is also a flexible candidate, so step 1
+        may already have recorded the same decision; that row gains `fixed_slot`
+        instead of appearing twice.
+        """
+        for row in rows:
+            if all(row.get(key) == record.get(key) for key in match_keys) and not row.get("fixed_slot"):
+                row["fixed_slot"] = slot
+                return
+        rows.append({**record, "fixed_slot": slot})
+
     def shape_week(self, state: KairosV2RunState) -> None:
         """
         Phase 10: shape the week.
@@ -1434,6 +1584,10 @@ class KairosV2Scheduler:
             state,
             duration_keys=("duration_minutes", "duration"),
         )
+        # Status scale-down for fixed slots (design step 2): same time, lighter
+        # content, or the slot is freed. Done before anything reads this list
+        # (covered-by-structure, gaps, placement, conceptual blocks).
+        active_fixed_time_nodes = self._scale_down_fixed_time_nodes(active_fixed_time_nodes, state)
 
         viable_candidates = list(
             state.schedule.get("reality_filtered_candidates", {}).get("candidates", [])
