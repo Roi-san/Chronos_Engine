@@ -92,6 +92,8 @@ def _period_key(d: date, period: str) -> str:
 def _normalize_targets(c: dict) -> list[dict]:
     # Canonical: targets
     targets = c.get('targets') if isinstance(c.get('targets'), list) else None
+    if not targets and isinstance(c.get('Targets'), list):
+        targets = c.get('Targets')
     if targets:
         return [t for t in targets if isinstance(t, dict)]
 
@@ -119,11 +121,19 @@ def _normalize_targets(c: dict) -> list[dict]:
     return []
 
 def _normalize_rule(c: dict) -> tuple[str, int, str]:
-    # Canonical: rule
-    rule = c.get('rule') if isinstance(c.get('rule'), dict) else None
-    if rule:
+    # Canonical: rule. commitment_defaults.yml writes `Rule: {Kind:, Times:, Period:}`,
+    # so read the keys case-insensitively and ignore a rule that was never filled in.
+    rule = c.get('rule') if isinstance(c.get('rule'), dict) else c.get('Rule')
+    if isinstance(rule, dict) and rule:
+        rule = {str(k).lower(): v for k, v in rule.items()}
+    else:
+        rule = None
+    if rule and str(rule.get('kind') or '').strip():
         kind = str(rule.get('kind') or '').lower()
-        times = int(rule.get('times') or 0)
+        try:
+            times = int(rule.get('times') or 0)
+        except (TypeError, ValueError):
+            times = 0
         period = str(rule.get('period') or 'week').lower()
         return (kind, times, period)
 
@@ -174,8 +184,37 @@ def _get_dates_for_target(item_type: str, item_name: str, *, for_never: bool) ->
         if polarity == 'bad':
             dates = data.get('incident_dates') or []
             return [d for d in dates if isinstance(d, str)]
-    dates = data.get('completion_dates') or []
-    return [d for d in dates if isinstance(d, str)]
+    dates = [d for d in (data.get('completion_dates') or []) if isinstance(d, str)]
+    if not for_never:
+        # A scaled-down version of the target (linked through `mini_variant` /
+        # `mini_of`) counts too: doing the smaller thing keeps the promise alive.
+        # The scheduler makes the same assumption when it swaps one in.
+        for mini_type, mini_name in _mini_items_for(data):
+            mini = read_item_data(mini_type, mini_name)
+            for d in (mini.get('completion_dates') or []) if isinstance(mini, dict) else []:
+                if isinstance(d, str) and d not in dates:
+                    dates.append(d)
+    return dates
+
+def _mini_items_for(item: dict) -> list[tuple[str, str]]:
+    """(type, name) of every authored scaled-down version of `item`."""
+    try:
+        from modules.scheduler import direction as Direction
+    except Exception:
+        return []
+    library = []
+    for item_type in Direction.LINKABLE_DIRS:
+        for other in list_all_items(item_type) or []:
+            if isinstance(other, dict):
+                lowered = {str(k).lower(): v for k, v in other.items()}
+                lowered.setdefault('type', item_type)
+                library.append(lowered)
+    wanted = set(Direction.mini_names_for(item, library))
+    return [
+        (str(other.get('type')), str(other.get('name')))
+        for other in library
+        if str(other.get('name') or '').strip().lower() in wanted
+    ]
 
 def _normalize_triggers(c: dict) -> dict:
     triggers = c.get('triggers') if isinstance(c.get('triggers'), dict) else {}

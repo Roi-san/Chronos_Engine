@@ -27,3 +27,11 @@ Scheduling_Priorities:
     Order: 5
     Rank: 4
     Description: The item's explicit authored priority.
+  - Name: Goal Alignment
+    Order: 6
+    Rank: 5
+    Description: Work linked to an active goal or milestone. Grows with the goal's priority and as its date approaches. 5 is neutral, 10 doubles the push, 0 switches it off.
+  - Name: Commitment Pressure
+    Order: 7
+    Rank: 5
+    Description: Work an unmet commitment counts. Grows as the period runs out, peaks on the last possible day, and carries over after a missed period. 5 is neutral, 10 doubles the push, 0 switches it off.

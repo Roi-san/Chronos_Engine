@@ -1,7 +1,7 @@
 # Home hub branch: what changed and what still needs attention
 
 Branch `home-hub`, built on `origin/alpha_v0.3` (`07a2bf1`). Nothing is committed yet.
-Scheduler details are in `docs/scheduling/builder_templates_prototype.md`. The Home page is described in `docs/guides/home.md`.
+Scheduler details are in `docs/scheduling/builder_templates_prototype.md` and `docs/scheduling/direction_goals_commitments.md`. The Home page is described in `docs/guides/home.md`.
 
 ## In one paragraph
 
@@ -25,6 +25,8 @@ The dashboard now opens on a **Home** page: what to do right now, today's plan, 
 - A routine placed as one block no longer has its steps scheduled a second time.
 - An item skipped today is not handed back on the next re-plan.
 - `sleep_gate.py` was missing `import os` and crashed on builder-made days.
+- **Goals and commitments are ranking factors** (`modules/scheduler/direction.py`). Work linked to a goal ranks higher as its date nears; work a commitment counts ranks higher as the period runs out, peaks on the last possible day, and gets extra push after a missed period.
+- **Scale-down.** When today's status does not fit an item and a lighter version was authored (`mini_of`), Kairos schedules the lighter one, and it still counts toward the commitment.
 
 ### Bugs fixed elsewhere
 - `new` ignored the properties you gave it (a 30-minute task was saved with duration 0).
@@ -42,7 +44,7 @@ The dashboard now opens on a **Home** page: what to do right now, today's plan, 
 `user/settings/alpha_gate_settings.yml` turns the alpha gate off, so goals, commitments, projects, rewards and achievements are usable. `alphagate reset` in the console turns it back on.
 
 ### Testing
-Full suite (excluding `tests/test_kairos.py`, which tests the archived v1 scheduler): 184 passed, 3 failed. The same 3 fail on untouched `alpha_v0.3`. A realistic fake life was also run through every view, widget and wizard in a headless browser.
+Full suite (excluding `tests/test_kairos.py`, which tests the archived v1 scheduler): 205 passed, 2 failed. Both also fail on untouched `alpha_v0.3`, which has a third failure (`test_console_plugins`) that this branch fixes. 32 of the passing tests are new. A realistic fake life was also run through every view, widget and wizard in a headless browser.
 
 ## What Kairos actually takes into account
 
@@ -54,17 +56,17 @@ Full suite (excluding `tests/test_kairos.py`, which tests the archived v1 schedu
 | Status (energy, health, place, …) | Yes: picks the best-matching day template and filters items with `status_requirements` / `place` |
 | Priority, category, due date, deadline, tags (in window filters), map of happiness | Yes, for ranking and window filling |
 | Completed and skipped blocks today | Yes |
-| **Goals and milestones** | **No.** Kairos never reads them. |
-| **Commitments** (e.g. "3 workouts a week") | **No.** They are evaluated after the fact by `commitments check`, not used to plan. |
-| **Projects** | **No.** A task's `project:` has no effect on planning. |
+| Goals and milestones | Yes, since this branch: linked work is brought into scope and ranked higher as the date nears. A goal with nothing linked to it changes nothing. |
+| Commitments (e.g. "3 workouts a week") | Yes, since this branch: needs a `rule` and `targets`. "Never" commitments are not scheduled. |
+| Projects | Only through a goal: a task whose project has a `goal:` is treated as serving that goal. |
 | **Appointments, reminders, alarms** | **No.** They ring through the listener, but the scheduler does not plan around them. An appointment has to be added to the day as an anchored timeblock to block that time. |
 
-So today the link from "what I'm aiming for" to "what I do today" runs only through tasks, habits and their priority. A goal does not pull its tasks forward, and a commitment that is falling behind does not get its habit scheduled sooner.
+Appointments are the remaining gap between "what my life contains" and "what Kairos plans around".
 
 ## Shaky bits that need attention
 
 ### For the friend, highest impact first
-1. **Goals, commitments and appointments do not reach the scheduler.** This is the biggest gap against the "load your life once and let Chronos plan it" idea. Suggested start: score boost for tasks linked to an active goal or milestone; boost for habits that a lagging commitment targets; appointments with a date and time become anchors for that day.
+1. **The goal and commitment weights are a first calibration.** They were tuned against one fake life and the shipped settings (`docs/scheduling/direction_goals_commitments.md` has the numbers). They need a few real weeks of use, and they are two rows in `scheduling_priorities.yml` to adjust. Also: a full version with a fixed slot in the day template is not scaled down; nothing fires when a commitment's period ends unmet; appointments still do not block time.
 2. **Tasks with no due date are never considered**, even if a window's tag filter matches them (`build_candidate_universe`). `task_defaults.yml` sets a due date of tomorrow, which hides this for tasks made with `new`.
 3. **Zero durations.** `generic_handle_new` writes `duration: 0`, and the Brain Dump wizard has no duration field, so its tasks can never be placed. Home warns and offers "Give them 30 min"; a default or a wizard field would fix it at the source.
 4. **A missed morning routine is re-queued into the afternoon** as one block. Needs a rule such as "do not re-queue after HH:MM".

@@ -50,6 +50,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from . import direction as Direction
 from .sleep_gate import get_active_sleep_block, normalize_sleep_policy
 from .v1 import (
     USER_DIR,
@@ -833,6 +834,14 @@ class KairosV2Scheduler:
         seen: set[str] = set()
         manual_adjustment_events: List[Dict[str, Any]] = []
 
+        # Goals and commitments: which items they point at, and how hard to push.
+        # A failure here must never stop the day from being planned.
+        try:
+            direction = Direction.load_direction(USER_DIR, state.target_date)
+        except Exception as exc:
+            direction = {"by_identity": {}, "goals": [], "commitments": [], "error": str(exc)}
+        direction_by_identity = direction.get("by_identity") or {}
+
         # Chosen template children are included by default, except for anchors
         # that have already been committed into the skeleton.
         for node in (template or {}).get("children") or []:
@@ -886,6 +895,15 @@ class KairosV2Scheduler:
                 reasons.append("has_due_date")
             if item.get("deadline"):
                 reasons.append("has_deadline")
+            # Work a goal or an unmet commitment points at stays in scope even with
+            # no due date and on days its own frequency would not bring it up.
+            item_direction = direction_by_identity.get(
+                f"{str(item.get('type') or '').strip().lower()}:{str(item.get('name') or '').strip().lower()}"
+            ) or {}
+            if float((item_direction.get("commitment") or {}).get("level") or 0.0) > 0:
+                reasons.append("commitment_needs_progress")
+            if float((item_direction.get("goal") or {}).get("level") or 0.0) > 0:
+                reasons.append("serves_active_goal")
 
             if not reasons:
                 continue
@@ -940,6 +958,25 @@ class KairosV2Scheduler:
                 self._append_candidate(candidates, seen, candidate)
             manual_soft_injections_applied += 1
 
+        for candidate in candidates:
+            signal = direction_by_identity.get(str(candidate.get("identity") or "").strip())
+            if signal:
+                candidate["direction"] = signal
+
+        state.schedule["direction"] = {
+            "goals": direction.get("goals") or [],
+            "commitments": direction.get("commitments") or [],
+            "pushed_items": [
+                {
+                    "identity": identity,
+                    "goal": (signal.get("goal") or {}).get("reason"),
+                    "commitment": (signal.get("commitment") or {}).get("reason"),
+                    "bonus": round(Direction.bonus_for(signal, self._priority_factor_weights(state)), 1),
+                }
+                for identity, signal in sorted(direction_by_identity.items())
+            ],
+            "error": direction.get("error"),
+        }
         state.schedule["candidate_universe"] = {
             "count": len(candidates),
             "candidates": candidates,
@@ -1011,11 +1048,14 @@ class KairosV2Scheduler:
 
             viable.append(candidate)
 
+        viable, scaled_down = self._scale_down_for_status(viable, state, completed_names | skipped_names)
+
         state.schedule["reality_filtered_candidates"] = {
             "count": len(viable),
             "candidates": viable,
             "impossible_count": len(impossible),
             "impossible_candidates": impossible,
+            "scaled_down": scaled_down,
         }
         state.phase_notes["remove_reality_impossible_candidates"] = {
             "viable_count": len(viable),
@@ -1030,6 +1070,107 @@ class KairosV2Scheduler:
             title="Removed candidates reality already ruled out",
             body="Dropped candidates that are already completed today or impossible because the remaining live day budget is gone.",
         )
+
+    def _scale_down_for_status(
+        self,
+        viable: List[Dict[str, Any]],
+        state: KairosV2RunState,
+        closed_names: set[str],
+    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Swap an item for its authored mini when today's status does not fit it.
+
+        "Gym session" may require good health and decent energy. On a sick or
+        low-energy day it does not fit, and if the pilot authored a smaller
+        version (`mini_variant` on the item, or `mini_of` on the mini) that fits
+        better, Kairos schedules that instead. The mini inherits the goal and
+        commitment pressure of the item it stands in for, and its completion
+        counts toward the same commitment, so the day still moves the needle.
+
+        Items without status requirements, or without a better-fitting mini, are
+        left exactly as they are.
+        """
+        out: List[Dict[str, Any]] = []
+        swaps: List[Dict[str, Any]] = []
+        index_by_identity: Dict[str, int] = {}
+
+        def add(candidate: Dict[str, Any]) -> None:
+            identity = str(candidate.get("identity") or "").strip()
+            if identity in index_by_identity:
+                existing = out[index_by_identity[identity]]
+                # Already present in its own right: keep one copy, with the stronger push.
+                if Direction.bonus_for(candidate.get("direction")) > Direction.bonus_for(existing.get("direction")):
+                    existing["direction"] = candidate.get("direction")
+                if candidate.get("scaled_down_from") and not existing.get("scaled_down_from"):
+                    existing["scaled_down_from"] = candidate.get("scaled_down_from")
+                    existing["reasons"] = list(dict.fromkeys(list(existing.get("reasons") or []) + ["scaled_down_for_current_status"]))
+                return
+            index_by_identity[identity] = len(out)
+            out.append(candidate)
+
+        for candidate in viable:
+            fit = candidate.get("local_status_fit") if isinstance(candidate.get("local_status_fit"), dict) else {}
+            distance = float(fit.get("weighted_distance") or 0.0)
+            if not fit.get("has_explicit_requirements") or distance <= 0:
+                add(candidate)
+                continue
+            mini = self._resolve_authored_mini_variant(candidate)
+            if not isinstance(mini, dict) or str(mini.get("name") or "").strip().lower() in closed_names:
+                add(candidate)
+                continue
+            mini = self._attach_candidate_status_fit(mini, state)
+            mini_fit = mini.get("local_status_fit") if isinstance(mini.get("local_status_fit"), dict) else {}
+            mini_distance = float(mini_fit.get("weighted_distance") or 0.0)
+            if mini_distance >= distance:
+                add(candidate)
+                continue
+            mini["direction"] = candidate.get("direction")
+            mini["scaled_down_from"] = {
+                "name": candidate.get("name"),
+                "identity": candidate.get("identity"),
+                "status_distance": distance,
+                "mini_status_distance": mini_distance,
+            }
+            mini["reasons"] = list(dict.fromkeys(list(mini.get("reasons") or []) + ["scaled_down_for_current_status"]))
+            for inherited in ("due_date", "deadline", "priority", "category"):
+                if not mini.get(inherited) and candidate.get(inherited):
+                    mini[inherited] = candidate.get(inherited)
+            swaps.append(
+                {
+                    "from": candidate.get("name"),
+                    "to": mini.get("name"),
+                    "status_distance": distance,
+                    "mini_status_distance": mini_distance,
+                }
+            )
+            add(mini)
+
+        # A mini is a stand-in. When the full version made it onto today's list
+        # unswapped, scheduling the mini as well would count the same thing twice.
+        swapped_in = {str(row.get("to") or "").strip().lower() for row in swaps}
+        full_names = {
+            self._normalize_token(candidate.get("name"))
+            for candidate in out
+            if not candidate.get("scaled_down_from")
+        }
+        wanted_minis = {
+            self._normalize_token(str(candidate.get("mini_variant")).split(":", 1)[-1])
+            for candidate in out
+            if candidate.get("mini_variant") and not candidate.get("scaled_down_from")
+        }
+        kept: List[Dict[str, Any]] = []
+        for candidate in out:
+            name_token = self._normalize_token(candidate.get("name"))
+            stands_for = self._normalize_token(str(candidate.get("mini_of") or "").split(":", 1)[-1])
+            is_redundant_mini = (
+                str(candidate.get("name") or "").strip().lower() not in swapped_in
+                and ((stands_for and stands_for in full_names) or name_token in wanted_minis)
+            )
+            if is_redundant_mini:
+                swaps.append({"from": candidate.get("name"), "to": None, "reason": "full_version_is_scheduled"})
+                continue
+            kept.append(candidate)
+        return kept, swaps
 
     def shape_week(self, state: KairosV2RunState) -> None:
         """
@@ -3903,7 +4044,12 @@ class KairosV2Scheduler:
         Helper windows stay narrow on purpose. They are for strong runtime
         pressures, not for every leftover candidate in the universe.
         """
-        return bool(candidate.get("manual_injected") or candidate.get("due_date") or candidate.get("deadline"))
+        return bool(
+            candidate.get("manual_injected")
+            or candidate.get("due_date")
+            or candidate.get("deadline")
+            or Direction.is_strong(candidate.get("direction"))
+        )
 
     def _score_runtime_helper_candidate(
         self,
@@ -3937,6 +4083,10 @@ class KairosV2Scheduler:
             return "deadline_pressure"
         if any(str(child.get("due_date") or "").strip() for child in selected_children):
             return "due_pressure"
+        if any(float(((child.get("direction") or {}).get("commitment") or {}).get("level") or 0.0) > 0 for child in selected_children):
+            return "commitment_pressure"
+        if any(float(((child.get("direction") or {}).get("goal") or {}).get("level") or 0.0) > 0 for child in selected_children):
+            return "goal_pressure"
         return "opportunity"
 
     def _runtime_helper_name(self, helper_kind: str) -> str:
@@ -3951,6 +4101,10 @@ class KairosV2Scheduler:
             return "Deadline Window"
         if helper_kind == "due_pressure":
             return "Due Window"
+        if helper_kind == "commitment_pressure":
+            return "Commitment Window"
+        if helper_kind == "goal_pressure":
+            return "Goal Window"
         return "Opportunity Window"
 
     def _inject_next_enabled(self) -> bool:
@@ -4258,6 +4412,8 @@ class KairosV2Scheduler:
                     "mini_of": candidate.get("mini_of"),
                     "mini_variant": candidate.get("mini_variant"),
                     "manual_injected": candidate.get("manual_injected"),
+                    "direction": candidate.get("direction"),
+                    "scaled_down_from": candidate.get("scaled_down_from"),
                     "top_level_parent_name": candidate.get("_top_level_parent_name"),
                     "top_level_parent_type": candidate.get("_top_level_parent_type"),
                     "placement_score": self._score_preservation_value(
@@ -4351,6 +4507,8 @@ class KairosV2Scheduler:
                     "max_trim_percent": candidate.get("max_trim_percent"),
                     "mini_of": candidate.get("mini_of"),
                     "mini_variant": candidate.get("mini_variant"),
+                    "direction": candidate.get("direction"),
+                    "scaled_down_from": candidate.get("scaled_down_from"),
                     "top_level_parent_name": node.get("_top_level_parent_name") or candidate.get("_top_level_parent_name"),
                     "top_level_parent_type": node.get("_top_level_parent_type") or candidate.get("_top_level_parent_type"),
                 }
@@ -5372,6 +5530,8 @@ class KairosV2Scheduler:
             "mini_of": item.get("mini_of"),
             "mini_variant": item.get("mini_variant"),
             "manual_injected": item.get("manual_injected"),
+            "direction": item.get("direction"),
+            "scaled_down_from": item.get("scaled_down_from"),
             "top_level_parent_name": item.get("top_level_parent_name") or item.get("_top_level_parent_name"),
             "top_level_parent_type": item.get("top_level_parent_type") or item.get("_top_level_parent_type"),
             "duration_minutes": int(duration_minutes),
@@ -5972,6 +6132,9 @@ class KairosV2Scheduler:
                 bonus += 12.0 * deadline_factor
             elif days_until_deadline <= 3:
                 bonus += 6.0 * deadline_factor
+
+        # Goal alignment and commitment pressure (see modules/scheduler/direction.py).
+        bonus += Direction.bonus_for(candidate.get("direction"), priority_factor_weights)
 
         return bonus
 

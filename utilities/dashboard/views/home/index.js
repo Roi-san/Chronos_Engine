@@ -112,6 +112,10 @@ function injectStyles() {
     .home-input, .home-select { font:inherit; font-size:13px; color:var(--chronos-text, #e8edf7); background:rgba(0,0,0,0.25); border:1px solid var(--chronos-border, rgba(255,255,255,0.14)); border-radius:10px; padding:9px 11px; min-width:0; color-scheme:dark; }
     .home-input:focus, .home-select:focus { outline:none; border-color:var(--chronos-accent, #7aa2f7); }
     .home-select option { background:#121828; color:#e8edf7; }
+    .home-capture-more { grid-column:1 / -1; display:flex; gap:10px; flex-wrap:wrap; }
+    .home-capture-more label { display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--chronos-text-muted, #9ca7bd); min-width:120px; flex:1 1 140px; }
+    .home-capture-more label[hidden] { display:none; }
+    .home-why { margin:10px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--chronos-warning, #ffbe5c); }
     .home-note { font-size:12px; color:var(--chronos-text-muted, #9ca7bd); margin:8px 0 0; min-height:16px; }
     .home-note.error { color:var(--chronos-danger, #ef6a6a); }
     .home-note.ok { color:var(--chronos-success, #5bdc82); }
@@ -327,14 +331,41 @@ export function mount(el, context) {
     const name = raw.replace(/(?:^|\s)#[\p{L}\p{N}_-]+/gu, ' ').replace(/\s+/g, ' ').trim();
     const type = form.type.value;
     const minutes = form.duration.value;
+    const extra = {
+      goal: form.goal?.value || '',
+      miniOf: form.mini_of?.value || '',
+      due: form.due_date?.value || '',
+      priority: form.priority?.value || '',
+      times: Number(form.times?.value || 0),
+      period: form.period?.value || 'week',
+      target: form.target?.value || '',
+    };
     return act('Saving', async () => {
       if (!name) return { note: { text: 'Type what is on your mind first.', tone: 'error' } };
+      if (type === 'commitment' && (!extra.target || extra.times < 1)) {
+        return { note: { text: 'A commitment needs a number and the habit or task it counts, e.g. 3 per week of "Gym session".', tone: 'error' } };
+      }
       const properties = {};
       // Without a duration the scheduler has nothing to place, so timed types always get one.
       if (['task', 'habit'].includes(type)) properties.duration = `${minutes}m`;
       if (tags.length) properties.tags = tags;
       // goal_defaults.yml is a blueprint with example milestones; a goal typed here is a real one.
-      if (type === 'goal') { properties.is_template = false; properties.milestones = []; properties.status = 'active'; }
+      if (type === 'goal') {
+        properties.is_template = false; properties.milestones = []; properties.status = 'active';
+        if (extra.due) properties.due_date = extra.due;
+        if (extra.priority) properties.priority = extra.priority;
+      }
+      // Links the scheduler reads (modules/scheduler/direction.py).
+      if (['task', 'habit'].includes(type)) {
+        if (extra.goal) properties.goal = extra.goal;
+        if (extra.miniOf) properties.mini_of = extra.miniOf;
+      }
+      if (type === 'commitment') {
+        const [targetType, ...rest] = extra.target.split(':');
+        properties.status = 'active';
+        properties.rule = { kind: 'frequency', times: extra.times, period: extra.period };
+        properties.targets = [{ type: targetType, name: rest.join(':') }];
+      }
       const result = await postJSON('/api/item', { type, name, properties });
       // The engine reports a gated type as a successful command whose output says "disabled".
       const refused = /disabled by the active alpha gate/i.test(String(result.data?.stdout || ''));
@@ -392,6 +423,21 @@ export function mount(el, context) {
     );
   }
 
+  // Why Kairos put this block on today: commitment progress, the goal it serves,
+  // and whether it is standing in for a bigger item.
+  function blockReasons(s, block) {
+    const key = String(block.name || '').trim().toLowerCase();
+    const direction = s.direction || {};
+    const reasons = [];
+    const standsFor = (direction.scaled_down || {})[key];
+    if (standsFor) {
+      reasons.push(`Lighter version of "${standsFor}" for how you are today. It still counts.`);
+      reasons.push(...(((direction.by_name || {})[standsFor.trim().toLowerCase()] || {}).reasons || []));
+    }
+    reasons.push(...(((direction.by_name || {})[key] || {}).reasons || []));
+    return Array.from(new Set(reasons));
+  }
+
   function renderNow(s) {
     const card = h('section', { class: 'home-card' }, h('h2', { class: 'home-card-title' }, 'Right now'));
     const blocks = actionableBlocks(s.today?.blocks);
@@ -440,6 +486,8 @@ export function mount(el, context) {
         ? `${block.start} – ${block.end} · ${fmtDuration(end - now)} left`
         : `${block.start} – ${block.end} · ${fmtDuration(end - start)}` }),
     );
+    const why = blockReasons(s, block);
+    if (why.length) card.append(h('ul', { class: 'home-why' }, why.map((text) => h('li', { text }))));
     if (running) {
       const pct = Math.min(100, Math.max(0, ((now - start) / Math.max(1, end - start)) * 100));
       card.append(h('div', { class: 'home-progress' }, h('i', { style: `width:${pct.toFixed(1)}%` })));
@@ -477,9 +525,17 @@ export function mount(el, context) {
       else if (b.status) tag = h('span', { class: 'home-tag', text: b.status });
       else if (past) tag = h('span', { class: 'home-tag warn', text: 'not marked' });
       else if (b.anchored) tag = h('span', { class: 'home-tag', text: 'fixed' });
+      else {
+        // A lighter version carries the pressure of the item it stands in for.
+        const ownKey = String(b.name).trim().toLowerCase();
+        const pushKey = String((s.direction?.scaled_down || {})[ownKey] || ownKey).trim().toLowerCase();
+        const pushState = ((s.direction?.by_name || {})[pushKey] || {}).state;
+        if (['last_chance', 'behind'].includes(pushState)) tag = h('span', { class: 'home-tag warn', text: 'last chance' });
+        else if (pushState === 'at_risk') tag = h('span', { class: 'home-tag warn', text: 'at risk' });
+      }
       list.appendChild(h('li', { class: [isCurrent ? 'current' : '', past && !isCurrent ? 'past' : '', done ? 'done' : ''].join(' ').trim() },
         h('span', { class: 'home-day-time', text: `${b.start} – ${b.end}` }),
-        h('span', { class: 'home-day-name', title: b.name, style: `padding-left:${b.group ? 14 : 0}px`, text: b.name }),
+        h('span', { class: 'home-day-name', title: [b.name, ...blockReasons(s, b)].join('\n'), style: `padding-left:${b.group ? 14 : 0}px`, text: b.name }),
         tag || h('span'),
       ));
     });
@@ -528,10 +584,23 @@ export function mount(el, context) {
     return card;
   }
 
-  function renderCapture() {
+  // Show only the detail fields that apply to the chosen kind.
+  function syncCaptureFields(form) {
+    const type = form.type.value;
+    form.duration.disabled = !['task', 'habit'].includes(type);
+    form.querySelectorAll('.home-capture-more label').forEach((label) => {
+      label.hidden = !(label.getAttribute('data-for') || '').split(' ').includes(type);
+    });
+  }
+
+  function renderCapture(s) {
+    const life = s?.life || {};
+    const goals = (life.goal || []).filter((g) => !CLOSED_STATES.has(String(g.status || '').toLowerCase()));
+    const doable = [...(life.habit || []), ...(life.task || []), ...(life.routine || [])]
+      .filter((d) => !CLOSED_STATES.has(String(d.status || '').toLowerCase()));
     const form = h('form', { class: 'home-capture', onsubmit: (ev) => { ev.preventDefault(); capture(form); } },
       h('input', { class: 'home-input', name: 'name', placeholder: 'What is on your mind? Add #tags if you like…', autocomplete: 'off', 'aria-label': 'What is on your mind' }),
-      h('select', { class: 'home-select', name: 'type', 'aria-label': 'Kind', onchange: () => { form.duration.disabled = !['task', 'habit'].includes(form.type.value); } },
+      h('select', { class: 'home-select', name: 'type', 'aria-label': 'Kind', onchange: () => syncCaptureFields(form) },
         [['task', 'Task'], ['habit', 'Habit'], ['goal', 'Goal'], ['commitment', 'Commitment'], ['project', 'Project'], ['note', 'Note']]
           .filter(([value]) => !typeOff(value))
           .map(([value, label]) => h('option', { value, text: label }))),
@@ -539,7 +608,30 @@ export function mount(el, context) {
         [[5, '5 min'], [15, '15 min'], [30, '30 min'], [45, '45 min'], [60, '1 hour'], [90, '1.5 hours'], [120, '2 hours']]
           .map(([value, label]) => h('option', { value, text: label, selected: value === 30 }))),
       h('button', { class: 'home-btn primary', type: 'submit', text: 'Add', disabled: state.busy }),
+      // Optional details, shown per kind. These are the links the scheduler acts on.
+      h('div', { class: 'home-capture-more' },
+        h('label', { 'data-for': 'task habit' }, 'For goal',
+          h('select', { class: 'home-select', name: 'goal' }, h('option', { value: '', text: '(none)' }),
+            goals.map((g) => h('option', { value: g.name, text: g.name })))),
+        h('label', { 'data-for': 'task habit', title: 'On a day when the full version does not fit your energy or health, Chronos schedules this one instead, and it still counts.' }, 'Lighter version of',
+          h('select', { class: 'home-select', name: 'mini_of' }, h('option', { value: '', text: '(none)' }),
+            doable.map((d) => h('option', { value: d.name, text: d.name })))),
+        h('label', { 'data-for': 'goal' }, 'Target date',
+          h('input', { class: 'home-input', type: 'date', name: 'due_date' })),
+        h('label', { 'data-for': 'goal' }, 'Priority',
+          h('select', { class: 'home-select', name: 'priority' },
+            [['', '(none)'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']].map(([value, label]) => h('option', { value, text: label })))),
+        h('label', { 'data-for': 'commitment' }, 'How often',
+          h('input', { class: 'home-input', type: 'number', name: 'times', min: '1', max: '31', value: '3' })),
+        h('label', { 'data-for': 'commitment' }, 'Per',
+          h('select', { class: 'home-select', name: 'period' },
+            [['day', 'day'], ['week', 'week'], ['month', 'month']].map(([value, label]) => h('option', { value, text: label, selected: value === 'week' })))),
+        h('label', { 'data-for': 'commitment' }, 'Of',
+          h('select', { class: 'home-select', name: 'target' }, h('option', { value: '', text: doable.length ? 'choose…' : 'add a habit or task first' }),
+            doable.map((d) => h('option', { value: `${d.type}:${d.name}`, text: `${d.name} (${d.type})` })))),
+      ),
     );
+    syncCaptureFields(form);
     return h('section', { class: 'home-card' },
       h('h2', { class: 'home-card-title' }, 'Get it out of your head',
         canWizard('brain_dump') && h('button', { class: 'home-link', text: 'Brain dump many at once', onclick: () => openWizard('brain_dump') })),
@@ -553,19 +645,34 @@ export function mount(el, context) {
     const meta = (item) => (Array.isArray(item.tags) && item.tags.length
       ? item.tags.map((t) => `#${t}`).join(' ')
       : item.due_date || item.deadline || item.frequency || item.duration || item.status || '');
+    const goalInfo = Object.fromEntries((s.direction?.goals || []).map((g) => [String(g.name).toLowerCase(), g]));
+    const commitmentInfo = Object.fromEntries((s.direction?.commitments || []).map((c) => [String(c.name).toLowerCase(), c]));
+    const goalMeta = (item) => {
+      const info = goalInfo[String(item.name).toLowerCase()];
+      if (!info) return meta(item);
+      const when = info.days_left === null || info.days_left === undefined ? 'no date'
+        : info.days_left < 0 ? `${-info.days_left}d overdue` : info.days_left === 0 ? 'due today' : `${info.days_left}d left`;
+      return `${when} · ${info.linked_items ? `${info.linked_items} linked` : 'nothing linked yet'}`;
+    };
+    const commitmentMeta = (item) => {
+      const info = commitmentInfo[String(item.name).toLowerCase()];
+      if (!info) return 'no rule set, so it is not scheduled';
+      const label = { met: 'met', on_track: 'on track', tightening: 'tightening', at_risk: 'at risk', last_chance: 'last chance', behind: 'behind' }[info.state] || info.state;
+      return `${info.progress}/${info.required} ${info.period === 'day' ? 'today' : `this ${info.period}`} · ${label}`;
+    };
     return [
       {
-        name: 'Goals', what: 'Where you are heading. Milestones break a goal into reachable steps.',
+        name: 'Goals', what: 'Where you are heading. Link tasks and habits to a goal and Chronos pulls them forward as its date nears.',
         items: [...(life.goal || []), ...(life.milestone || [])],
-        count: (life.goal || []).length, meta, off: typeOff('goal'),
+        count: (life.goal || []).length, meta: goalMeta, off: typeOff('goal'),
         actions: [
           canWizard('goal_planning') && ['Plan a goal', () => openWizard('goal_planning')],
           canView('goal_planner', 'Goal Planner') ? ['Open planner', () => openView('goal_planner', 'Goal Planner')] : ['Manage', () => openItems('goal')],
         ],
       },
       {
-        name: 'Commitments', what: 'Promises to yourself: "at least 3 workouts a week", "never skip breakfast".',
-        items: life.commitment || [], meta, off: typeOff('commitment'),
+        name: 'Commitments', what: 'Promises to yourself: "3 workouts a week". Chronos pushes the habit harder as the week runs out.',
+        items: life.commitment || [], meta: commitmentMeta, off: typeOff('commitment'),
         actions: [canWidget('Commitments') ? ['Open tracker', () => openWidget('Commitments')] : ['Manage', () => openItems('commitment')]],
       },
       {
@@ -726,13 +833,16 @@ export function mount(el, context) {
       return;
     }
     // Keep what the pilot was typing across re-renders.
-    const typed = wrap.querySelector('.home-capture input[name="name"]');
-    const draft = typed ? { name: typed.value, type: wrap.querySelector('.home-capture select[name="type"]').value, duration: wrap.querySelector('.home-capture select[name="duration"]').value, focused: document.activeElement === typed } : null;
+    const oldForm = wrap.querySelector('form.home-capture');
+    const draft = oldForm ? {
+      values: Object.fromEntries(Array.from(oldForm.elements).filter((el) => el.name).map((el) => [el.name, el.value])),
+      focused: document.activeElement && oldForm.contains(document.activeElement) ? document.activeElement.name : '',
+    } : null;
 
     wrap.replaceChildren(
       renderHero(s),
       h('div', { class: 'home-grid-top' },
-        h('div', { class: 'home-col' }, renderNow(s), renderStatus(s), renderCapture()),
+        h('div', { class: 'home-col' }, renderNow(s), renderStatus(s), renderCapture(s)),
         h('div', { class: 'home-col' }, renderDay(s), renderSetup(s)),
       ),
       renderLife(s),
@@ -740,15 +850,16 @@ export function mount(el, context) {
     );
 
     if (draft) {
-      const input = wrap.querySelector('.home-capture input[name="name"]');
-      const type = wrap.querySelector('.home-capture select[name="type"]');
-      const duration = wrap.querySelector('.home-capture select[name="duration"]');
-      input.value = state.clearDraft ? '' : draft.name;
+      const form = wrap.querySelector('form.home-capture');
+      Array.from(form.elements).forEach((el) => {
+        if (!el.name || !(el.name in draft.values)) return;
+        // A select only takes a value it still offers (lists change as items are added).
+        if (el.tagName !== 'SELECT' || Array.from(el.options).some((o) => o.value === draft.values[el.name])) el.value = draft.values[el.name];
+      });
+      if (state.clearDraft) form.name.value = '';
       state.clearDraft = false;
-      type.value = draft.type;
-      duration.value = draft.duration;
-      duration.disabled = !['task', 'habit'].includes(type.value);
-      if (draft.focused) input.focus();
+      syncCaptureFields(form);
+      if (draft.focused && form.elements[draft.focused]) form.elements[draft.focused].focus();
     }
   }
 

@@ -29,6 +29,7 @@ LIFE_TYPES = [
 ITEM_FIELDS = (
     "status", "priority", "category", "duration", "due_date", "deadline",
     "frequency", "tags", "description", "polarity", "chore", "time", "date",
+    "goal", "mini_of", "mini_variant",
 )
 
 
@@ -143,6 +144,12 @@ def _today():
         return out
 
     out["exists"] = True
+    try:
+        meta = payload.get("schedule") if isinstance(payload, dict) else None
+        filtered = meta.get("reality_filtered_candidates") if isinstance(meta, dict) else None
+        out["scaled_down"] = list(filtered.get("scaled_down") or []) if isinstance(filtered, dict) else []
+    except Exception:
+        out["scaled_down"] = []
 
     def walk(items, depth, group=""):
         for item in items or []:
@@ -244,14 +251,52 @@ def _alpha_gate():
         return {}
 
 
+def _direction(today):
+    """
+    Goal and commitment pressure for today, keyed by item name for the Home view.
+    Uses the same module the scheduler does, so Home explains what Kairos sees.
+    """
+    out = {"by_name": {}, "commitments": [], "goals": [], "scaled_down": {}}
+    try:
+        from modules.scheduler import direction as Direction
+        loaded = Direction.load_direction(USER_DIR, datetime.now().date())
+    except Exception as exc:
+        out["error"] = str(exc)
+        return out
+    for identity, signal in (loaded.get("by_identity") or {}).items():
+        name = identity.split(":", 1)[1] if ":" in identity else identity
+        row = out["by_name"].setdefault(name, {"reasons": [], "state": ""})
+        commitment = signal.get("commitment") or {}
+        goal = signal.get("goal") or {}
+        if commitment.get("reason"):
+            row["reasons"].append(commitment["reason"])
+            row["state"] = commitment.get("state") or ""
+        if goal.get("reason"):
+            row["reasons"].append(goal["reason"])
+    out["commitments"] = [
+        {key: row.get(key) for key in ("name", "state", "progress", "required", "days_left", "period", "reason")}
+        for row in loaded.get("commitments") or []
+    ]
+    out["goals"] = loaded.get("goals") or []
+    # Which blocks on today's plan stand in for a bigger item.
+    for swap in (today.get("scaled_down") or []):
+        if isinstance(swap, dict) and swap.get("to") and swap.get("from"):
+            out["scaled_down"][str(swap["to"]).strip().lower()] = str(swap["from"])
+    return out
+
+
 def build_summary():
     life = _life()
+    today = _today()
+    direction = _direction(today)
+    today.pop("scaled_down", None)
     return {
         "ok": True,
         "now": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         "profile": _profile(),
         "status": _status(),
-        "today": _today(),
+        "today": today,
+        "direction": direction,
         "life": life,
         "counts": {key: len(rows) for key, rows in life.items()},
         "alpha_gate": _alpha_gate(),
