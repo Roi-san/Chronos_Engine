@@ -1,6 +1,6 @@
 # Status-aware scale-down: design
 
-Status (branch `home-hub-fixes`): design confirmed by the pilot on 2026-11-17. **Step 1 (flexible items) and step 2 (fixed template slots) implemented**; step 3 (Home) not yet. See the [implementation log](#implementation-log) and [future ideas](#future-ideas).
+Status (branch `home-hub-fixes`): design confirmed by the pilot on 2026-11-17. **All three steps implemented**: 1) flexible items, 2) fixed template slots, 3) Home. See the [implementation log](#implementation-log) and [future ideas](#future-ideas).
 
 Related: `docs/scheduling/direction_goals_commitments.md` (goal and commitment pressure, the existing lighter-version swap), `docs/reference/item_properties.md` (what Kairos reads today).
 
@@ -115,7 +115,7 @@ Until then, the order of dimensions in `status_settings.yml` is how importance i
 
 - `schedule.reality_filtered_candidates.impossible_candidates`, reason `saved_for_better_day`, with each short dimension (needed, today, steps), strain and importance.
 - Kept-despite and urgent cases: a `status_note` on the candidate.
-- Home: "Saved for a better day" list with Add back; the existing "Lighter version of ..." note; a "kept although ..." note.
+- Home (step 3): a "Saved for a better day" card with Add back; the "Lighter version of ..." note (now also for fixed-slot swaps); a "Kept although ..." sentence on kept blocks, with a **tough today** tag in the Today list. Wording is built in `utilities/dashboard/home_api.py` (`status_effects`).
 
 ## Future ideas
 
@@ -201,3 +201,37 @@ Verification:
 - Scenario table: only the fixed-slot row changed (sick day, slot needs energy high, no lighter version: Gym -> freed).
 - Rich 7-day plan and the status-heavy week (no fixed slots with requirements): identical to step 1.
 - A fixed-slot week (Deep work 09:00-11:00 needing focus, Gym 18:00 needing health and energy, with a lighter version; goal, commitment and plain tasks): Wednesday and Thursday changed from "Gym 18:00 + Mobility 08:00" to "Mobility 18:00-18:20"; Friday (focus absent) freed Deep work's 09:00-11:00; Monday (good day) unchanged.
+
+Committed as `9c7da21`.
+
+### Step 3: Home (2026-11-17)
+
+What the pilot sees:
+
+- **Saved for a better day** card (only when something was saved): name, the fixed slot's time if it was one, and what today falls short on ("Today energy is exhausted (needs high)."). **Add back** runs `today inject "<name>" type:<type>` through `window.ChronosRunCliCommand` (so the sleep prompt still works), which re-plans; the note then says where it went ("Added back: Gym at 22:30.") or that no time was left.
+- **Kept although ...**: a sentence per kept block, in Right now's reasons and in the Today list's tooltip, with a **tough today** tag. Reasons: "it is only a little short" (grace), "its deadline is today" / "it is due today" / "it is overdue" / "its deadline has passed" / "it is the last chance to keep its commitment" / "its commitment is behind" (urgent), "its goal/commitment/priority matters more than the strain" (importance, strongest source named).
+- **Lighter version of ...** now also appears for fixed-slot swaps (step 2 records them only in `status_scale_down.swapped`; Home merges both records).
+
+Problem found while writing the tests: Add back did not work for a fixed slot. The slot pass (`_scale_down_fixed_time_nodes`) did not look at manual injections, so a saved "Gym 18:00" stayed removed and the injected copy went to the first free gap (08:00) instead. Fixed: a slot whose item has a soft manual injection today is left as authored (`notes.added_back`). A hard injection (`today inject X at HH:MM`) is not treated this way, since it has its own time.
+
+Code:
+
+| Where | Change |
+| --- | --- |
+| `kairos_v2._scale_down_fixed_time_nodes` | Skips slots added back by hand (soft injections), recorded in phase notes `fixed_slot_status_scale_down.added_back`. |
+| `home_api.status_effects` (new) and helpers | Turns `schedule.status_scale_down` into `today.status_effects` = `{saved: [{name, type, fixed_slot, text}], kept: {name: sentence}}`. Type comes from the identity (`habit:gym`), default `task` like `today inject`. Malformed input gives empty lists. |
+| `home_api._today` | Adds `status_effects`; drops saved items already on the plan or done today; merges fixed-slot swaps into `scaled_down`. |
+| `views/home/index.js` | `renderSaved` card, `addBack` action, kept sentence in `blockReasons`, **tough today** tag. |
+
+Tests: 2 new in `tests/test_kairos_v2_status_fixed_slots.py` (added back returns to its own slot; is not swapped for the lighter version), written first, both failed (Gym at 08:00), now pass. 16 in `tests/test_home_api_status_effects.py` (wording, malformed input, dedup, and 4 against real Kairos plans so a change to the record's shape breaks them).
+
+Verification:
+
+- Full suite: 287 passed; the same 2 pre-existing failures.
+- End to end in a throwaway copy, real CLI and dashboard in headless Chrome: exhausted evening with a fixed "Gym 22:30" slot (needs energy high), a daily "Long run" (needs high) and "File taxes" (deadline today, needs medium + good health). Home showed Gym (22:30 - 23:15) and Long run as saved, File taxes as **tough today** with "its deadline is today". Pressing Add back on Gym: "Added back: Gym at 22:30.", Gym back at 22:30 - 23:15, Long run still listed. No new console errors (only the known 404s for the avatar and the generated settings bundle).
+
+Noticed, not caused by this change, not fixed (tracked in `docs/ISSUES_AND_NEXT_STEPS.md`):
+
+- **Sleep after midnight empties the day.** A sleep anchor at `00:30` is read as 00:30 *this* morning, so `remaining_minutes_before_sleep` is 0 and nothing is placed. Sleep at 23:55 works.
+- **Work is placed after a fixed slot rather than before it.** At 22:05 with Gym fixed at 22:30, File taxes (20 min) goes to 23:15 after a re-plan, although 22:07 - 22:27 is free. Same with no status involved at all.
+- **`python modules/console.py today reschedule` segfaults on exit** when its output is redirected (exit 139). The schedule is written first. Same on the untouched previous commit; not seen from the dashboard.

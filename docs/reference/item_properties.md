@@ -122,7 +122,7 @@ For an item, only being **worse** than it needs counts; being better than needed
 
 Strain = sum over dimensions of (steps short - grace) x dimension weight, where the top-ranked dimension weighs 1.0 and the rest fall by rank (shipped: Health 1.0, Energy 0.71, Focus 0.43). Importance = the strongest of the item's commitment pressure, goal pressure and own `priority` (critical 1.0, high 0.7, medium 0.4), each times its weight in `scheduling_priorities.yml` / 5 (Commitment Pressure, Goal Alignment, Priority Property).
 
-Fixed slots in the day template follow the same rule at their own time (see [Fixed times](#fixed-times-anchors-windows)). Items added by hand (`today inject "<name>"`) and anchors are never removed by status. What happened is in `schedule.status_scale_down` (`swapped`, `kept` with the reason, `saved` with strain and importance). Full design, worked examples and decisions: `docs/scheduling/status_scale_down_design.md`.
+Fixed slots in the day template follow the same rule at their own time (see [Fixed times](#fixed-times-anchors-windows)). Items added by hand (`today inject "<name>"`, which is what Home's **Add back** button runs) and anchors are never removed by status; a fixed slot added back keeps its own time. Home lists what was saved under "Saved for a better day". What happened is in `schedule.status_scale_down` (`swapped`, `kept` with the reason, `saved` with strain and importance). Full design, worked examples and decisions: `docs/scheduling/status_scale_down_design.md`.
 
 The same one-way distance also sets what is cut first when the day overflows (a poor fit is easier to sacrifice) and ranks `inject:next`.
 

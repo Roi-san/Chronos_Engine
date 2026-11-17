@@ -131,6 +131,22 @@ class FixedSlotSafeDefaults(unittest.TestCase):
         self.assertEqual(_starts(schedule, "Gym"), ["18:00"])
         self.assertEqual(_starts(schedule, "Mobility"), [])
 
+    def test_added_back_by_hand_returns_to_its_own_slot(self):
+        # Home's "Add back" runs `today inject "Gym" type:habit` (soft). A slot the
+        # pilot asked for is never removed by status, and it keeps its time.
+        added_back = {"manual_injections": [{"name": "Gym", "type": "habit", "mode": "soft"}]}
+        schedule = _plan(gym_item(**needs(energy="high")), status=LOW, day=_day(SLOT), context=added_back)
+        self.assertEqual(_starts(schedule, "Gym"), ["18:00"])
+        self.assertNotIn("Gym", _saved(schedule))
+        self.assertEqual([row["name"] for row in schedule["status_scale_down"]["saved"]], [])
+
+    def test_added_back_by_hand_is_not_swapped_for_the_lighter_version(self):
+        added_back = {"manual_injections": [{"name": "Gym", "type": "habit", "mode": "soft"}]}
+        schedule = _plan({**gym_item(**needs(energy="high")), **mobility_item()}, status=LOW,
+                         day=_day(SLOT), context=added_back)
+        self.assertEqual(_starts(schedule, "Gym"), ["18:00"])
+        self.assertEqual(_starts(schedule, "Mobility"), [])
+
     def test_anchors_are_never_touched(self):
         anchor = {**SLOT, "name": "Dentist", "type": "appointment", "reschedule": "never", **needs(energy="high")}
         self.assertEqual(_starts(_plan({}, status=EXHAUSTED, day=_day(anchor)), "Dentist"), ["18:00"])

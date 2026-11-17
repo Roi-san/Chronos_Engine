@@ -1358,7 +1358,15 @@ class KairosV2Scheduler:
         filtered = state.schedule.get("reality_filtered_candidates")
         filtered = filtered if isinstance(filtered, dict) else None
         closed_names = self._closed_names_before_now(state.target_date, state.now)
-        notes: Dict[str, List[str]] = {"swapped": [], "kept": [], "saved": []}
+        # Added back by hand (Home's "Add back" = `today inject "<name>" type:<type>`,
+        # a soft injection): status never removes it, and it keeps its slot. A hard
+        # injection has its own time and is placed as an anchor, so it is not here.
+        added_back = {
+            f"{str(request.get('type') or '').strip().lower()}:{str(request.get('name') or '').strip().lower()}"
+            for request in state.gathered.get("manual", {}).get("manual_injections", [])
+            if str(request.get("mode") or "").strip().lower() == "soft"
+        }
+        notes: Dict[str, List[str]] = {"swapped": [], "kept": [], "saved": [], "added_back": []}
         out: List[Dict[str, Any]] = []
 
         for node in nodes:
@@ -1369,6 +1377,10 @@ class KairosV2Scheduler:
             identity = candidate.get("identity")
             if str(candidate.get("name") or "").strip().lower() in closed_names:
                 out.append(node)
+                continue
+            if str(identity or "").strip().lower() in added_back:
+                out.append(node)
+                notes["added_back"].append(str(candidate.get("name")))
                 continue
             signal = state.direction_by_identity.get(identity)
             if signal:

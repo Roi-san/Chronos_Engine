@@ -60,6 +60,106 @@ def _hm(value):
     return f"{min(23, int(match.group(1))):02d}:{min(59, int(match.group(2))):02d}"
 
 
+# -- what today's status did to the plan ---------------------------------------
+# Kairos writes `schedule.status_scale_down` (modules/scheduler/kairos_v2.py,
+# docs/scheduling/status_scale_down_design.md): lighter versions swapped in,
+# items kept although today falls short, and items saved for a better day.
+# Home turns that record into plain sentences here, so the wording is tested
+# (tests/test_home_api_status_effects.py) and the view only displays it.
+
+_URGENT_TEXT = {
+    "deadline_today": "its deadline is today",
+    "deadline_overdue": "its deadline has passed",
+    "due_date_today": "it is due today",
+    "due_date_overdue": "it is overdue",
+    "commitment_last_chance": "it is the last chance to keep its commitment",
+    "commitment_behind": "its commitment is behind",
+}
+
+_IMPORTANT_TEXT = {
+    "commitment": "its commitment matters more than the strain",
+    "goal": "its goal matters more than the strain",
+    "priority": "its priority matters more than the strain",
+}
+
+
+def _label(value):
+    return str(value or "").strip().replace("_", " ")
+
+
+def _shortfall_text(short_dimensions):
+    """'energy is low (needs high or medium)'; several joined with 'and'."""
+    parts = []
+    for row in short_dimensions or []:
+        if not isinstance(row, dict) or not row.get("dimension"):
+            continue
+        accepts = [_label(v) for v in (row.get("accepts") or []) if _label(v)]
+        needs = f" (needs {' or '.join(accepts)})" if accepts else ""
+        parts.append(f"{_label(row['dimension'])} is {_label(row.get('today')) or 'unknown'}{needs}")
+    return " and ".join(parts)
+
+
+def _kept_reason(row):
+    kind = str(row.get("kind") or "")
+    if kind == "within_grace":
+        return "it is only a little short"
+    if kind == "urgent":
+        return _URGENT_TEXT.get(str(row.get("urgent_because") or ""), "it is urgent")
+    if kind == "important":
+        sources = [s for s in (row.get("importance_sources") or []) if isinstance(s, dict) and s.get("source")]
+        if sources:
+            top = max(sources, key=lambda s: float(s.get("value") or 0.0))
+            return _IMPORTANT_TEXT.get(str(top["source"]), "it matters more than the strain")
+        return "it matters more than the strain"
+    return ""
+
+
+def _identity_type(identity):
+    text = str(identity or "")
+    return text.split(":", 1)[0].strip().lower() if ":" in text else ""
+
+
+def status_effects(record):
+    """
+    Plain-language view of `schedule.status_scale_down` for Home.
+
+    Returns:
+      saved: [{name, type, fixed_slot, text}] in plan order. `type` feeds Add back
+             (`today inject "<name>" type:<type>`).
+      kept:  {lowercase name: sentence} for blocks kept although today falls short.
+    Missing or malformed input gives empty lists, never an error.
+    """
+    out = {"saved": [], "kept": {}}
+    if not isinstance(record, dict):
+        return out
+    seen = set()
+    rows = lambda key: record.get(key) if isinstance(record.get(key), list) else []
+    for row in rows("saved"):
+        if not isinstance(row, dict) or not str(row.get("name") or "").strip():
+            continue
+        name = str(row["name"]).strip()
+        if name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        shortfall = _shortfall_text(row.get("short_dimensions"))
+        out["saved"].append({
+            "name": name,
+            "type": _identity_type(row.get("identity")) or "task",
+            "fixed_slot": str(row.get("fixed_slot") or ""),
+            "text": f"Today {shortfall}." if shortfall else "Today does not fit it.",
+        })
+    for row in rows("kept"):
+        if not isinstance(row, dict) or not str(row.get("name") or "").strip():
+            continue
+        shortfall = _shortfall_text(row.get("short_dimensions"))
+        reason = _kept_reason(row)
+        text = "Kept although today does not quite fit it"
+        if shortfall:
+            text = f"Kept although {shortfall}"
+        out["kept"][str(row["name"]).strip().lower()] = f"{text}: {reason}." if reason else f"{text}."
+    return out
+
+
 def _profile():
     data = _read_yaml(os.path.join(USER_DIR, "profile", "profile.yml")) or {}
     return {"nickname": str(data.get("nickname") or "").strip()}
@@ -114,7 +214,7 @@ def _status():
 def _today():
     """Today's generated schedule, flattened, with what has been done so far."""
     date_str = datetime.now().strftime("%Y-%m-%d")
-    out = {"date": date_str, "exists": False, "blocks": [], "completions": {}}
+    out = {"date": date_str, "exists": False, "blocks": [], "completions": {}, "status_effects": status_effects(None)}
     closed_entries = []
 
     comp = _read_yaml(os.path.join(USER_DIR, "schedules", "completions", f"{date_str}.yml")) or {}
@@ -144,12 +244,22 @@ def _today():
         return out
 
     out["exists"] = True
+    meta = payload.get("schedule") if isinstance(payload, dict) else None
     try:
-        meta = payload.get("schedule") if isinstance(payload, dict) else None
         filtered = meta.get("reality_filtered_candidates") if isinstance(meta, dict) else None
         out["scaled_down"] = list(filtered.get("scaled_down") or []) if isinstance(filtered, dict) else []
     except Exception:
         out["scaled_down"] = []
+    try:
+        record = meta.get("status_scale_down") if isinstance(meta, dict) else None
+        record = record if isinstance(record, dict) else {}
+        # Fixed-slot swaps (step 2) are only in this record, not in `scaled_down`.
+        for row in record.get("swapped") or []:
+            if isinstance(row, dict) and row.get("to") and row not in out["scaled_down"]:
+                out["scaled_down"].append(row)
+        out["status_effects"] = status_effects(record)
+    except Exception:
+        out["status_effects"] = status_effects(None)
 
     def walk(items, depth, group=""):
         for item in items or []:
@@ -203,6 +313,12 @@ def _today():
         })
     # Stable sort: keeps each window's contents directly under its heading.
     out["blocks"].sort(key=lambda b: b["start"])
+    # Something saved for a better day that is on the plan after all (added back,
+    # placed by hand) or already done today no longer needs the Add back button.
+    on_today = present | set(out["completions"])
+    out["status_effects"]["saved"] = [
+        row for row in out["status_effects"]["saved"] if row["name"].strip().lower() not in on_today
+    ]
     return out
 
 

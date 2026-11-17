@@ -116,6 +116,11 @@ function injectStyles() {
     .home-capture-more label { display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--chronos-text-muted, #9ca7bd); min-width:120px; flex:1 1 140px; }
     .home-capture-more label[hidden] { display:none; }
     .home-why { margin:10px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--chronos-warning, #ffbe5c); }
+    .home-saved { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+    .home-saved li { display:grid; grid-template-columns:1fr auto; gap:4px 10px; align-items:center; padding:8px 10px; border-radius:10px; background:var(--chronos-surface-soft, rgba(255,255,255,0.04)); }
+    .home-saved-name { font-size:13px; font-weight:600; }
+    .home-saved-why { grid-column:1 / 2; font-size:12px; color:var(--chronos-text-muted, #9ca7bd); line-height:1.45; }
+    .home-saved li > button { grid-row:1 / span 2; grid-column:2; }
     .home-note { font-size:12px; color:var(--chronos-text-muted, #9ca7bd); margin:8px 0 0; min-height:16px; }
     .home-note.error { color:var(--chronos-danger, #ef6a6a); }
     .home-note.ok { color:var(--chronos-success, #5bdc82); }
@@ -295,6 +300,31 @@ export function mount(el, context) {
     return { note: { text: status === 'completed' ? `Done: ${block.name}` : `Skipped: ${block.name}`, tone: 'ok' } };
   });
 
+  // Saved for a better day -> Add back. `today inject "<name>" type:<type>` is a
+  // soft injection: Kairos re-plans, places it where it fits (a fixed slot gets
+  // its own time back), and status never removes something added by hand.
+  // docs/scheduling/status_scale_down_design.md, step 3.
+  const addBack = (row) => act(`Adding back ${row.name}`, async () => {
+    const payload = { command: 'today', args: ['inject', row.name], properties: { type: row.type || 'task' } };
+    let ok = false;
+    let detail = '';
+    if (typeof window.ChronosRunCliCommand === 'function') {
+      const result = await window.ChronosRunCliCommand(payload);
+      ok = !!(result?.response?.ok && result?.data?.ok !== false);
+      detail = result?.data?.stderr || result?.data?.error || '';
+    } else {
+      const result = await postJSON('/api/cli', payload);
+      ok = result.ok;
+      detail = result.data?.stderr || result.data?.error || '';
+    }
+    try { window.calendarLoadToday?.(true); } catch { }
+    if (!ok) return { note: { text: `Could not add back "${row.name}". ${String(detail).split('\n')[0]}`, tone: 'error' } };
+    const fresh = await getJSON('/api/home/summary').catch(() => null);
+    const placed = (fresh?.today?.blocks || []).find((b) => String(b.name).trim().toLowerCase() === row.name.trim().toLowerCase());
+    if (!placed) return { note: { text: `Added back "${row.name}", but there was no free time left for it today.`, tone: 'error' } };
+    return { note: { text: `Added back: ${row.name} at ${placed.start}.`, tone: 'ok' } };
+  });
+
   const startDay = () => act('Starting the timer', async () => {
     if (typeof window.ChronosStartDay !== 'function') return { note: { text: 'Timer is not available.', tone: 'error' } };
     await window.ChronosStartDay({ source: 'home' });
@@ -435,6 +465,9 @@ export function mount(el, context) {
       reasons.push(...(((direction.by_name || {})[standsFor.trim().toLowerCase()] || {}).reasons || []));
     }
     reasons.push(...(((direction.by_name || {})[key] || {}).reasons || []));
+    // Kept on the plan although today's status falls short of what it needs.
+    const kept = (s.today?.status_effects?.kept || {})[key];
+    if (kept) reasons.push(kept);
     return Array.from(new Set(reasons));
   }
 
@@ -532,6 +565,9 @@ export function mount(el, context) {
         const pushState = ((s.direction?.by_name || {})[pushKey] || {}).state;
         if (['last_chance', 'behind'].includes(pushState)) tag = h('span', { class: 'home-tag warn', text: 'last chance' });
         else if (pushState === 'at_risk') tag = h('span', { class: 'home-tag warn', text: 'at risk' });
+        // Kept although today's status falls short of it (the sentence is in the tooltip).
+        const kept = (s.today?.status_effects?.kept || {})[ownKey];
+        if (!tag && kept) tag = h('span', { class: 'home-tag', title: kept, text: 'tough today' });
       }
       list.appendChild(h('li', { class: [isCurrent ? 'current' : '', past && !isCurrent ? 'past' : '', done ? 'done' : ''].join(' ').trim() },
         h('span', { class: 'home-day-time', text: `${b.start} – ${b.end}` }),
@@ -543,6 +579,22 @@ export function mount(el, context) {
       h('h2', { class: 'home-card-title' }, 'Today',
         h('button', { class: 'home-link', text: 'Open full schedule', onclick: () => openView('schedule', 'Schedule') })),
       list,
+    );
+  }
+
+  // What today's status left out, with a way to have it anyway. Nothing is
+  // dropped silently: the pilot sees it and decides.
+  function renderSaved(s) {
+    const rows = s.today?.exists ? (s.today?.status_effects?.saved || []) : [];
+    if (!rows.length) return null;
+    return h('section', { class: 'home-card' },
+      h('h2', { class: 'home-card-title' }, 'Saved for a better day'),
+      h('p', { class: 'home-empty', text: 'Left out of today because of how you are. Add one back if you want it anyway.' }),
+      h('ul', { class: 'home-saved' }, rows.map((row) => h('li', {},
+        h('span', { class: 'home-saved-name', text: row.fixed_slot ? `${row.name} · ${row.fixed_slot.replace('-', ' – ')}` : row.name }),
+        h('button', { class: 'home-btn small', text: 'Add back', disabled: state.busy, title: `Runs: today inject "${row.name}" type:${row.type}`, onclick: () => addBack(row) }),
+        h('span', { class: 'home-saved-why', text: row.text }),
+      ))),
     );
   }
 
@@ -843,7 +895,7 @@ export function mount(el, context) {
       renderHero(s),
       h('div', { class: 'home-grid-top' },
         h('div', { class: 'home-col' }, renderNow(s), renderStatus(s), renderCapture(s)),
-        h('div', { class: 'home-col' }, renderDay(s), renderSetup(s)),
+        h('div', { class: 'home-col' }, renderDay(s), renderSaved(s), renderSetup(s)),
       ),
       renderLife(s),
       renderFoot(s),
