@@ -2,7 +2,7 @@
 # In commands/complete.py
 
 import sys
-from modules.item_manager import dispatch_command
+from modules.item_manager import dispatch_command, read_item_data, write_item_data
 try:
     from utilities.tracking import is_trackable, mark_complete
 except Exception:
@@ -29,6 +29,28 @@ def _normalize_time_str(value):
         return datetime.strptime(text, "%H:%M").strftime("%H:%M")
     except ValueError:
         return None
+
+
+def close_one_off_item(item_type, item_name):
+    """
+    Mark a one-off task as finished by setting `status: completed`.
+
+    `mark "<task>":completed` already does this for items without a
+    `frequency`; `complete task <name>` did not, so Kairos saw an open task
+    with a past due date and scheduled it again the next day. Recurring tasks
+    keep their status. Only tasks are closed here. Returns True when the file
+    was changed.
+    """
+    if str(item_type or "").strip().lower() != "task":
+        return False
+    data = read_item_data("task", item_name)
+    if not isinstance(data, dict) or data.get("frequency"):
+        return False
+    if str(data.get("status") or "").strip().lower() == "completed":
+        return False
+    data["status"] = "completed"
+    write_item_data("task", item_name, data)
+    return True
 
 
 def run(args, properties):
@@ -92,7 +114,12 @@ def run(args, properties):
             else:
                 outcome = 'attended'
                 count_as_completion = True
-        mark_complete(item_type, item_name, minutes=minutes, count=count, outcome=outcome, count_as_completion=count_as_completion)
+        found = mark_complete(item_type, item_name, minutes=minutes, count=count, outcome=outcome, count_as_completion=count_as_completion)
+        if found and count_as_completion:
+            try:
+                close_one_off_item(item_type, item_name)
+            except Exception as exc:
+                print(f"Warning: could not set status on '{item_name}': {exc}")
         run_completion_effects(
             item_type,
             item_name,

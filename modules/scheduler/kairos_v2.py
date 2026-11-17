@@ -874,6 +874,7 @@ class KairosV2Scheduler:
 
         # Recurring and due-driven granular work stays in scope even when the
         # current template does not explicitly contain it.
+        finished_one_offs_skipped: List[str] = []
         for item in self._iter_schedulable_library_items():
             if self._is_inactive_status(item):
                 continue
@@ -904,6 +905,13 @@ class KairosV2Scheduler:
                 reasons.append("commitment_needs_progress")
             if float((item_direction.get("goal") or {}).get("level") or 0.0) > 0:
                 reasons.append("serves_active_goal")
+
+            # A finished one-off (no frequency, status completed/done/cancelled) is
+            # not brought back by its old due date or goal. An unmet commitment
+            # still may: commitment targets are meant to repeat.
+            if self._is_finished_one_off(item) and "commitment_needs_progress" not in reasons:
+                finished_one_offs_skipped.append(str(item.get("name") or "").strip())
+                continue
 
             if not reasons:
                 continue
@@ -987,6 +995,7 @@ class KairosV2Scheduler:
             "candidate_names": [candidate.get("name") for candidate in candidates],
             "manual_soft_injection_count": manual_soft_injections_applied,
             "manual_adjustment_event_count": len(manual_adjustment_events),
+            "finished_one_offs_skipped": finished_one_offs_skipped,
         }
         self._record_commit(
             state,
@@ -3654,6 +3663,19 @@ class KairosV2Scheduler:
         """
         status = str(node.get("status") or "").strip().lower()
         return status in {"inactive", "archived", "disabled", "paused"}
+
+    def _is_finished_one_off(self, node: Dict[str, Any]) -> bool:
+        """
+        A non-recurring item whose own status says it is finished.
+
+        `mark "<item>":completed` writes `status: completed` onto items that
+        have no `frequency` (and `complete task` does the same for tasks).
+        Recurring items are never judged by their status here.
+        """
+        if node.get("frequency"):
+            return False
+        status = str(node.get("status") or "").strip().lower()
+        return status in {"completed", "complete", "done", "cancelled", "canceled", "abandoned", "dropped"}
 
     def _is_bad_habit(self, node: Dict[str, Any]) -> bool:
         """

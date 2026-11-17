@@ -221,6 +221,7 @@ Marks an item as completed.
 **Notes:**
 - Runs completion side effects: commitment evaluation/triggers, milestone evaluation, and points awarding.
 - Prefer this when you want full item-level completion behavior.
+- On a one-off task (no `frequency`) it also sets `status: completed`, as `mark` does, so Kairos does not schedule it again on later days. Set `status: pending` to reopen it.
 
 ### `did`
 Logs actuals for a schedule block.

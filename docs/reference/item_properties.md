@@ -41,7 +41,11 @@ Library items are always skipped when they are bad habits (`polarity: bad`), anc
 - `due_date` (YYYY-MM-DD): Brings the item into scope and adds urgency: overdue or today +20, tomorrow +10, within 3 days +5 (at the shipped weights in `scheduling_priorities.yml`).
 - `deadline` (YYYY-MM-DD): Same, stronger: +25 / +12 / +6.
 
-Note: Kairos removes an item only if it was completed **today** (from the day's completion log). Completing a one-off task with `complete` or `mark` does not change its `status` or `due_date`, so a task completed yesterday with a past due date is scheduled again today with the overdue bonus. Clear the `due_date` (or set `status: archived`) on finished one-off tasks until this is fixed.
+### Finished one-off items
+
+An item with no `frequency` whose `status` is `completed`, `complete`, `done`, `cancelled`, `canceled`, `abandoned` or `dropped` is not brought back by its due date, deadline or goal. `mark "<name>":completed` and `complete task <name>` both write `status: completed` onto such items. To reopen one, set its `status` back to `pending`.
+
+An unmet commitment can still bring a finished one-off back, because commitment targets are meant to repeat. Recurring items (with a `frequency`) are never hidden by their `status`. The decision log lists what was left out under `finished_one_offs_skipped`.
 
 ### Skipped today
 
