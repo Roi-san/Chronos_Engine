@@ -64,6 +64,22 @@ from .v1 import (
 )
 
 
+# Status-aware scale-down (docs/scheduling/status_scale_down_design.md).
+# Steps an item may fall short on one dimension before it can be left out.
+# Overridden per dimension (`Grace` in status_settings.yml) and per item (`status_grace`).
+STATUS_DEFAULT_GRACE = 1
+# Close calls lean toward keeping: an item stays when importance >= strain - margin.
+STATUS_CLOSE_CALL_MARGIN = 0.1
+# An item's own `priority` as importance (0-1), before the Priority Property weight.
+STATUS_PRIORITY_IMPORTANCE = {
+    "critical": 1.0, "urgent": 1.0, "highest": 1.0,
+    "high": 0.7,
+    "medium": 0.4, "normal": 0.4, "moderate": 0.4,
+}
+# Commitment states that make an item urgent (direction.evaluate_commitment).
+STATUS_URGENT_COMMITMENT_STATES = {"last_chance", "behind"}
+
+
 @dataclass
 class KairosV2RunState:
     """
@@ -1057,7 +1073,10 @@ class KairosV2Scheduler:
 
             viable.append(candidate)
 
-        viable, scaled_down = self._scale_down_for_status(viable, state, completed_names | skipped_names)
+        viable, scaled_down, saved_for_better_day, status_kept = self._scale_down_for_status(
+            viable, state, completed_names | skipped_names
+        )
+        impossible.extend(saved_for_better_day)
 
         state.schedule["reality_filtered_candidates"] = {
             "count": len(viable),
@@ -1066,12 +1085,24 @@ class KairosV2Scheduler:
             "impossible_candidates": impossible,
             "scaled_down": scaled_down,
         }
+        # One place to read what today's status did (Home, decision log, agents).
+        state.schedule["status_scale_down"] = {
+            "swapped": [dict(row) for row in scaled_down if row.get("to")],
+            "kept": status_kept,
+            "saved": [
+                {"name": row.get("name"), "identity": row.get("identity"), **(row.get("status_verdict") or {})}
+                for row in saved_for_better_day
+            ],
+        }
         state.phase_notes["remove_reality_impossible_candidates"] = {
             "viable_count": len(viable),
             "impossible_count": len(impossible),
             "completed_names_seen": sorted(list(completed_names)),
             "hard_anchor_semantic_tokens": sorted(list(anchor_name_tokens)),
             "no_time_left_today": no_time_left_today,
+            "status_swapped": [row.get("from") for row in scaled_down if row.get("to")],
+            "status_kept": [row.get("name") for row in status_kept],
+            "status_saved_for_better_day": [row.get("name") for row in saved_for_better_day],
         }
         self._record_commit(
             state,
@@ -1085,22 +1116,33 @@ class KairosV2Scheduler:
         viable: List[Dict[str, Any]],
         state: KairosV2RunState,
         closed_names: set[str],
-    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
-        Swap an item for its authored mini when today's status does not fit it.
+        Scale today's flexible items down to how the pilot actually is.
 
-        "Gym session" may require good health and decent energy. On a sick or
-        low-energy day it does not fit, and if the pilot authored a smaller
-        version (`mini_variant` on the item, or `mini_of` on the mini) that fits
-        better, Kairos schedules that instead. The mini inherits the goal and
-        commitment pressure of the item it stands in for, and its completion
-        counts toward the same commitment, so the day still moves the needle.
+        Design and decisions: docs/scheduling/status_scale_down_design.md.
 
-        Items without status requirements, or without a better-fitting mini, are
-        left exactly as they are.
+        For an item with `status_requirements` that today falls short of
+        (one-way fit, see `_score_status_shortfall`):
+
+        1. It has an authored lighter version (`mini_variant` on the item, or
+           `mini_of` on the mini) that is not more demanding: schedule the
+           lighter one, even if it is short too (keep the smaller one visible).
+           The mini inherits the goal and commitment pressure of the item it
+           stands in for, and its completion counts toward the same commitment.
+        2. Otherwise `_status_unfit_verdict` decides: within grace, urgent, or
+           important enough -> keep it with a `status_note`; else save it for a
+           better day (left out of the plan, recorded with the reasons).
+
+        Items without requirements, items that fit, and items added by hand
+        (manual injections) are left exactly as they are.
+
+        Returns (kept candidates, swaps, saved-for-a-better-day rows, kept-despite notes).
         """
         out: List[Dict[str, Any]] = []
         swaps: List[Dict[str, Any]] = []
+        saved_for_better_day: List[Dict[str, Any]] = []
+        status_kept: List[Dict[str, Any]] = []
         index_by_identity: Dict[str, int] = {}
 
         def add(candidate: Dict[str, Any]) -> None:
@@ -1120,19 +1162,42 @@ class KairosV2Scheduler:
         for candidate in viable:
             fit = candidate.get("local_status_fit") if isinstance(candidate.get("local_status_fit"), dict) else {}
             distance = float(fit.get("weighted_distance") or 0.0)
-            if not fit.get("has_explicit_requirements") or distance <= 0:
+            if (
+                candidate.get("manual_injected")
+                or not fit.get("has_explicit_requirements")
+                or int(fit.get("max_short") or 0) <= 0
+            ):
                 add(candidate)
                 continue
+
             mini = self._resolve_authored_mini_variant(candidate)
-            if not isinstance(mini, dict) or str(mini.get("name") or "").strip().lower() in closed_names:
-                add(candidate)
+            usable_mini = None
+            mini_distance = 0.0
+            if isinstance(mini, dict) and str(mini.get("name") or "").strip().lower() not in closed_names:
+                mini = self._attach_candidate_status_fit(mini, state)
+                mini_fit = mini.get("local_status_fit") if isinstance(mini.get("local_status_fit"), dict) else {}
+                mini_distance = float(mini_fit.get("weighted_distance") or 0.0)
+                # A lighter version that demands more than the full one is no help.
+                if mini_distance <= distance:
+                    usable_mini = mini
+
+            if usable_mini is None:
+                verdict = self._status_unfit_verdict(candidate, fit, state)
+                keep = bool(verdict.pop("keep"))
+                record = {"name": candidate.get("name"), "identity": candidate.get("identity"), **verdict}
+                if keep:
+                    kept = dict(candidate)
+                    kept["status_note"] = verdict
+                    status_kept.append(record)
+                    add(kept)
+                else:
+                    saved = dict(candidate)
+                    saved["impossible_reason"] = "saved_for_better_day"
+                    saved["status_verdict"] = verdict
+                    saved_for_better_day.append(saved)
                 continue
-            mini = self._attach_candidate_status_fit(mini, state)
-            mini_fit = mini.get("local_status_fit") if isinstance(mini.get("local_status_fit"), dict) else {}
-            mini_distance = float(mini_fit.get("weighted_distance") or 0.0)
-            if mini_distance >= distance:
-                add(candidate)
-                continue
+
+            mini = usable_mini
             mini["direction"] = candidate.get("direction")
             mini["scaled_down_from"] = {
                 "name": candidate.get("name"),
@@ -1179,7 +1244,89 @@ class KairosV2Scheduler:
                 swaps.append({"from": candidate.get("name"), "to": None, "reason": "full_version_is_scheduled"})
                 continue
             kept.append(candidate)
-        return kept, swaps
+        return kept, swaps, saved_for_better_day, status_kept
+
+    def _status_unfit_verdict(
+        self,
+        candidate: Dict[str, Any],
+        fit: Dict[str, Any],
+        state: KairosV2RunState,
+    ) -> Dict[str, Any]:
+        """
+        Decide whether an item that today falls short of, with no lighter
+        version, stays in the plan (design decisions 2, 5, 8).
+
+        - within_grace: no dimension is short by more than its grace.
+        - urgent: due date or deadline today or overdue, or a commitment at
+          last chance / behind.
+        - important: importance >= strain - STATUS_CLOSE_CALL_MARGIN.
+        - saved: none of the above; left out today.
+
+        Returns a dict with `keep` plus the reasons, safe to store and show.
+        """
+        strain = float(fit.get("strain") or 0.0)
+        verdict: Dict[str, Any] = {
+            "strain": round(strain, 3),
+            "importance": None,
+            "short_dimensions": [dict(row) for row in (fit.get("short_dimensions") or [])],
+        }
+        if int(fit.get("max_beyond_grace") or 0) <= 0:
+            return {**verdict, "kind": "within_grace", "keep": True}
+
+        urgent_because = self._status_urgency_reason(candidate, state.target_date)
+        if urgent_because:
+            return {**verdict, "kind": "urgent", "keep": True, "urgent_because": urgent_because}
+
+        importance, sources = self._status_importance(candidate, state)
+        verdict["importance"] = round(importance, 3)
+        verdict["importance_sources"] = sources
+        keep = importance >= strain - STATUS_CLOSE_CALL_MARGIN
+        return {**verdict, "kind": "important" if keep else "saved", "keep": keep}
+
+    def _status_urgency_reason(self, candidate: Dict[str, Any], target_date: date) -> Optional[str]:
+        """
+        Return why an item is urgent today, or None (design decision 5).
+        """
+        for key in ("deadline", "due_date"):
+            when = self._parse_date(candidate.get(key))
+            if when and when <= target_date:
+                return f"{key}_{'today' if when == target_date else 'overdue'}"
+        commitment = (candidate.get("direction") or {}).get("commitment") or {}
+        state_name = str(commitment.get("state") or "").strip().lower()
+        if state_name in STATUS_URGENT_COMMITMENT_STATES:
+            return f"commitment_{state_name}"
+        return None
+
+    def _status_importance(
+        self,
+        candidate: Dict[str, Any],
+        state: KairosV2RunState,
+    ) -> tuple[float, List[Dict[str, Any]]]:
+        """
+        How much the item matters to the pilot, on a 0-1 scale before weights.
+
+        The strongest of: commitment pressure, goal pressure (both from
+        direction.py) and the item's own `priority` (STATUS_PRIORITY_IMPORTANCE),
+        each times its 0-10 weight in scheduling_priorities.yml divided by 5
+        (Commitment Pressure, Goal Alignment, Priority Property; 5 is neutral,
+        10 doubles, 0 switches it off; a missing row counts as 5).
+        """
+        weights = self._priority_factor_weights(state)
+
+        def factor(name: str) -> float:
+            return float(weights.get(name, Direction.DEFAULT_FACTOR_RANK)) / float(Direction.DEFAULT_FACTOR_RANK)
+
+        direction = candidate.get("direction") if isinstance(candidate.get("direction"), dict) else {}
+        commitment_level = float(((direction.get("commitment") or {}).get("level")) or 0.0)
+        goal_level = float(((direction.get("goal") or {}).get("level")) or 0.0)
+        priority_level = STATUS_PRIORITY_IMPORTANCE.get(self._normalize_token(candidate.get("priority")), 0.0)
+        rows = [
+            ("commitment", commitment_level * factor("commitment_pressure")),
+            ("goal", goal_level * factor("goal_alignment")),
+            ("priority", priority_level * factor("priority_property")),
+        ]
+        best = max(value for _, value in rows)
+        return best, [{"source": source, "value": round(value, 3)} for source, value in rows if value > 0]
 
     def shape_week(self, state: KairosV2RunState) -> None:
         """
@@ -3249,6 +3396,9 @@ class KairosV2Scheduler:
                 {
                     "key": self._normalize_token(row.get("Name")),
                     "rank": rank,
+                    # Optional per-dimension grace in steps (status scale-down).
+                    # None means "use STATUS_DEFAULT_GRACE".
+                    "grace": self._coerce_status_grace(row.get("Grace")),
                 }
             )
 
@@ -3257,8 +3407,28 @@ class KairosV2Scheduler:
             # weight. This keeps the logic simple and readable.
             row["weight"] = max(1, (max_rank + 1) - row["rank"])
 
+        # The same weight on a 0-1 scale (top-ranked dimension = 1.0), used for
+        # status-scale-down strain. This is the one place dimension importance
+        # comes from; see "Adding weights later" in
+        # docs/scheduling/status_scale_down_design.md to make it user-set.
+        top_weight = max((row["weight"] for row in normalized), default=1)
+        for row in normalized:
+            row["unit_weight"] = row["weight"] / top_weight if top_weight else 0.0
+
         normalized.sort(key=lambda item: (item["rank"], item["key"]))
         return normalized
+
+    def _coerce_status_grace(self, value: Any) -> Optional[int]:
+        """
+        Read a grace value in steps (0 or more). Anything unusable means "not set".
+        """
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            steps = int(value)
+        except (TypeError, ValueError):
+            return None
+        return steps if steps >= 0 else None
 
     def _attach_candidate_status_fit(
         self,
@@ -3271,6 +3441,11 @@ class KairosV2Scheduler:
         The chosen template already carries most status reasoning by default.
         This local fit layer only matters when a candidate explicitly declares
         its own status requirements or overrides inherited ones.
+
+        The fit is one-way (docs/scheduling/status_scale_down_design.md,
+        decision 1): only being worse than the item needs counts. Template
+        choice keeps the two-way closest match in
+        `_score_status_requirements_alignment`.
         """
         enriched = dict(candidate)
         requirements = candidate.get("status_requirements")
@@ -3279,23 +3454,118 @@ class KairosV2Scheduler:
                 "has_explicit_requirements": False,
                 "weighted_distance": 0,
                 "matched_dimensions": 0,
+                "short_dimensions": [],
+                "max_short": 0,
+                "max_beyond_grace": 0,
+                "strain": 0.0,
             }
             return enriched
 
-        fit = self._score_status_requirements_alignment(
+        fit = self._score_status_shortfall(
             requirements=requirements,
             current_status=state.reality.get("current_status", {}) or {},
             status_settings=state.gathered.get("settings", {}).get("status_settings", {}) or {},
             value_maps=self._load_status_value_maps(),
-            include_place=False,
+            grace_override=self._coerce_status_grace(candidate.get("status_grace")),
         )
-        enriched["local_status_fit"] = {
-            "has_explicit_requirements": True,
-            "weighted_distance": fit.get("weighted_distance", 0),
-            "matched_dimensions": fit.get("matched_dimensions", 0),
-            "considered_dimensions": fit.get("considered_dimensions", []),
-        }
+        enriched["local_status_fit"] = {"has_explicit_requirements": True, **fit}
         return enriched
+
+    def _score_status_shortfall(
+        self,
+        *,
+        requirements: Any,
+        current_status: Dict[str, Any],
+        status_settings: Dict[str, Any],
+        value_maps: Optional[Dict[str, Dict[str, int]]] = None,
+        grace_override: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        One-way status fit for an item: how far today falls short of what it needs.
+
+        For each dimension the item names (declared in status_settings.yml, with
+        both today's value and an accepted value on that dimension's scale):
+        - `steps_short` = today's value minus the worst value the item accepts
+          (each scale runs 1 = best), never below 0. Better than needed is 0.
+        - `beyond_grace` = steps_short minus the grace (item `status_grace`,
+          else the dimension's `Grace`, else STATUS_DEFAULT_GRACE), never below 0.
+
+        Returns:
+        - weighted_distance: sum of steps_short x rank weight (same scale as the
+          two-way distance it replaces; used for lighter-version and cut order)
+        - strain: sum of beyond_grace x 0-1 dimension weight (decides whether an
+          item with no lighter version is saved for a better day)
+        - short_dimensions, max_short, max_beyond_grace, matched_dimensions,
+          considered_dimensions (diagnostics)
+
+        `place` is skipped (it is a list of locations, not a scale), and unknown
+        dimensions or values are ignored, as in the two-way match.
+        """
+        raw = requirements if isinstance(requirements, dict) else {}
+        normalized_requirements = {self._normalize_token(key): value for key, value in raw.items()}
+        today = {self._normalize_token(key): value for key, value in (current_status or {}).items()}
+        maps = value_maps if isinstance(value_maps, dict) else self._load_status_value_maps()
+
+        weighted_distance = 0
+        strain = 0.0
+        matched_dimensions = 0
+        considered: List[Dict[str, Any]] = []
+        short_dimensions: List[Dict[str, Any]] = []
+
+        for dimension in self._normalize_status_dimensions(status_settings):
+            key = dimension["key"]
+            if key == "place":
+                continue
+            allowed = normalized_requirements.get(key)
+            if not allowed:
+                continue
+            allowed_values = allowed if isinstance(allowed, list) else [allowed]
+            scale = maps.get(key, {})
+            today_token = self._normalize_token(today.get(key))
+            today_score = scale.get(today_token)
+            accepted_tokens = [self._normalize_token(value) for value in allowed_values]
+            accepted_scores = [scale[token] for token in accepted_tokens if token in scale]
+            if today_score is None or not accepted_scores:
+                considered.append({"dimension": key, "matched": False, "reason": "unresolved_value_mapping"})
+                continue
+
+            steps_short = max(0, int(today_score) - max(accepted_scores))
+            if grace_override is not None:
+                grace = grace_override
+            elif dimension.get("grace") is not None:
+                grace = int(dimension["grace"])
+            else:
+                grace = STATUS_DEFAULT_GRACE
+            beyond_grace = max(0, steps_short - grace)
+
+            weighted_distance += steps_short * dimension["weight"]
+            strain += beyond_grace * float(dimension.get("unit_weight") or 0.0)
+            matched_dimensions += 1
+            row = {
+                "dimension": key,
+                "matched": steps_short == 0,
+                "today": today_token,
+                "accepts": accepted_tokens,
+                "steps_short": steps_short,
+                "grace": grace,
+                "beyond_grace": beyond_grace,
+                "weight": round(float(dimension.get("unit_weight") or 0.0), 3),
+                "distance": steps_short,
+                "weighted_distance": steps_short * dimension["weight"],
+            }
+            considered.append(row)
+            if steps_short > 0:
+                short_dimensions.append(row)
+
+        return {
+            "weighted_distance": weighted_distance,
+            "matched_dimensions": matched_dimensions,
+            "considered_dimensions": considered,
+            "short_dimensions": short_dimensions,
+            "max_short": max((row["steps_short"] for row in short_dimensions), default=0),
+            "max_beyond_grace": max((row["beyond_grace"] for row in short_dimensions), default=0),
+            "strain": round(strain, 3),
+        }
 
     def _load_status_value_maps(self) -> Dict[str, Dict[str, int]]:
         """
@@ -3651,6 +3921,7 @@ class KairosV2Scheduler:
             "cut": node.get("cut"),
             "shift": node.get("shift"),
             "max_trim_percent": node.get("max_trim_percent"),
+            "status_grace": node.get("status_grace"),
             "mini_of": node.get("mini_of"),
             "mini_variant": node.get("mini_variant"),
             "source": source,

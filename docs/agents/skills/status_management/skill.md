@@ -36,7 +36,9 @@ Keep per-dimension files aligned with the dimensions defined in `status_settings
 - `this friday`
 
 ## Tagging Items With `status_requirements`
-Use `status_requirements` on schedulable items/templates so Chronos favors them when current status matches.
+On an item, `status_requirements` says what the item **needs** (the worst state it can still be done in). Being better than needed is never a mismatch. When today falls short, Kairos swaps in the item's lighter version (`mini_of`), keeps it within one step of grace, keeps it when it is urgent or its goal/commitment/priority outweighs the strain, and otherwise saves it for a better day. On a day template, `status_requirements` picks the closest-matching template.
+
+When the pilot asks why something is missing on a low day, read `schedule.status_scale_down` in today's schedule file (`saved` lists each item with the short dimensions, strain and importance). To put it back: `today inject "<name>" type:<type>`; items added by hand are never removed by status. Strictness can be tuned per dimension (`Grace` in `status_settings.yml`) or per item (`status_grace`). Full rules: `docs/scheduling/status_scale_down_design.md`.
 
 Example:
 ```yaml
@@ -60,7 +62,7 @@ variants:
     duration: 30m
 ```
 
-Legacy status keys are still recognized, but `status_requirements` is preferred.
+Note: `variants` and legacy top-level status keys (e.g. `energy: low` directly on an item) are not read by Kairos v2. Use `status_requirements`, and a separate lighter item with `mini_of` instead of `variants`.
 
 ## Guardrails
 - Set status before major schedule rebuilds.

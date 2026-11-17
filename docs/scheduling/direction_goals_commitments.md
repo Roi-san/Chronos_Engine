@@ -78,13 +78,14 @@ The bonus is added in `_urgency_bonus`, which every scoring path already calls (
 
 ## Scaling down
 
-In `_scale_down_for_status`, after the status fit of each candidate is known:
+Superseded in detail by `docs/scheduling/status_scale_down_design.md` (2026-11-17). In short, in `_scale_down_for_status`, after the one-way status fit of each candidate is known:
 
-- an item whose `status_requirements` do not match today (`weighted_distance > 0`) and that has an authored mini with a better fit is replaced by the mini;
+- an item that today falls short of (worse than the worst value it accepts; better than needed is never a mismatch) and that has an authored mini no more demanding than itself is replaced by the mini, even if the mini is short too;
 - the mini inherits the goal and commitment pressure of the item it replaces;
-- a mini is never scheduled next to its own full version.
+- a mini is never scheduled next to its own full version;
+- with no mini, the item stays when it is within grace, urgent, or its goal/commitment/priority importance outweighs the strain; otherwise it is saved for a better day.
 
-Items without status requirements, or without a better-fitting mini, are untouched. The swaps are recorded in `reality_filtered_candidates.scaled_down`, and the Home page says "Lighter version of ... It still counts."
+Goal and commitment pressure therefore do two jobs: they rank work (above), and they decide whether an item is kept on a day that does not fit it. The swaps are recorded in `reality_filtered_candidates.scaled_down`, everything status did in `schedule.status_scale_down`, and the Home page says "Lighter version of ... It still counts."
 
 `modules/commitment/main.py` now counts a mini's completions toward the commitment too, so the tracker and the scheduler agree.
 

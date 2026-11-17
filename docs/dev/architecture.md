@@ -30,7 +30,7 @@ Items are the atoms of Chronos. They are stored as YAML files in the `user/` dir
   4. `commit_anchor_skeleton`: place `reschedule: never` anchors from the template and hard injections.
   5. `model_day_budget`: how much flexible time is left before sleep.
   6. `build_candidate_universe`: template children plus library items that recur today, have a due date or deadline, or are pushed by a goal or commitment (`direction.py`).
-  7. `remove_reality_impossible_candidates`: drop what was completed or skipped today; swap in lighter versions (`mini_of`) where today's status does not fit.
+  7. `remove_reality_impossible_candidates`: drop what was completed or skipped today; scale down to today's status (`_scale_down_for_status`: swap in lighter versions, keep within grace / urgent / important items, save the rest for a better day; see `docs/scheduling/status_scale_down_design.md`).
   8. `shape_week`, `populate_day_and_windows`, `narrow_window_candidate_pools`, `select_window_contents`: lay out fixed-time structure and fill windows by tag/category filter and score.
   9. `handle_gaps_buffers_and_recovery`, `build_runtime_helper_windows`, `place_remaining_structure`: fill gaps, open helper windows for urgent work the template has no place for ("Deadline Window", "Due Window", "Commitment Window", "Goal Window", "Manual Opportunity Window", "Best Next Window" for `inject:next`), place remaining items.
   10. `run_pressure_relief_pipeline`: on overflow, lighter versions, then trims, then cuts, only on items that allow them.

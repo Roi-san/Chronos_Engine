@@ -105,16 +105,30 @@ A window is a template node that Kairos fills with the best-ranked matching cand
 
 - `status_requirements` (map): Status dimension to an allowed value or list of values, for example `{energy: [high, medium], health: good}`. Dimensions and their value order come from `user/settings/status_settings.yml` and `user/settings/<dimension>_settings.yml`.
 
-How Kairos compares: each value has a rank in its settings file; the distance is the rank difference times the dimension's weight, summed over the dimensions the item names. `place` is skipped (deferred in v2). Unknown values are ignored.
+- `status_grace` (number, optional): Steps this item may fall short on any dimension before it can be left out. Overrides the dimension's `Grace`. `0` = strict, larger = more forgiving.
 
-What the distance changes:
+Each dimension's values are ordered by the `value` number in its settings file, 1 = best (Energy: High 1, Medium 2, Low 3, Exhausted 4). The importance of each dimension is its `Rank` in `status_settings.yml` (1 = most important); a row may also set `Grace: <steps>` (default 1). `place` is skipped, and unknown dimensions or values are ignored. Keys and values are case-insensitive.
 
-- **Day template choice**: closest match wins (see above).
-- **Lighter versions**: an item that does not fit today is swapped for its `mini_of` version when that fits better (see below).
-- **What is cut first** when the day overflows: a poor fit makes an item easier to sacrifice.
-- **`inject:next`** placement prefers good fits.
+### On an item: one-way fit and scale-down
 
-What it does **not** do: it is not a filter. If no lighter version exists, an item whose requirements do not match today is still placed in windows and gaps like any other.
+For an item, only being **worse** than it needs counts; being better than needed is never a mismatch. For each dimension it names, Kairos counts how many steps today is below the worst value it accepts. Then:
+
+1. **Nothing short**: scheduled.
+2. **Short, and a lighter version exists** (`mini_of` / `mini_variant`, not more demanding than the full one): the lighter version is scheduled instead, even if it is short too. It keeps the goal and commitment pressure.
+3. **Short, no lighter version, within grace** on every dimension (default: one step): scheduled.
+4. **Further short**:
+   - **urgent** (due date or deadline today or overdue, or a commitment at "last chance" / "behind"): scheduled;
+   - else **importance vs strain**: scheduled if importance >= strain - 0.1, otherwise **saved for a better day** (left out today, recorded with the reasons).
+
+Strain = sum over dimensions of (steps short - grace) x dimension weight, where the top-ranked dimension weighs 1.0 and the rest fall by rank (shipped: Health 1.0, Energy 0.71, Focus 0.43). Importance = the strongest of the item's commitment pressure, goal pressure and own `priority` (critical 1.0, high 0.7, medium 0.4), each times its weight in `scheduling_priorities.yml` / 5 (Commitment Pressure, Goal Alignment, Priority Property).
+
+Items added by hand (`today inject "<name>"`) and anchors are never removed by status. What happened is in `schedule.status_scale_down` (`swapped`, `kept` with the reason, `saved` with strain and importance). Full design, worked examples and decisions: `docs/scheduling/status_scale_down_design.md`.
+
+The same one-way distance also sets what is cut first when the day overflows (a poor fit is easier to sacrifice) and ranks `inject:next`.
+
+### On a day template
+
+Template choice keeps the **two-way closest match** (see "How the template is chosen"), so a "Sick Day" template does not also win on a healthy day.
 
 Legacy top-level status keys (for example `energy: high` directly on an item) are not read by Kairos v2; use `status_requirements`.
 
