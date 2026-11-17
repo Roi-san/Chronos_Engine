@@ -1,6 +1,6 @@
 # Home hub branch: what changed and what still needs attention
 
-Branch `home-hub`, built on `origin/alpha_v0.3` (`07a2bf1`). Nothing is committed yet.
+Branch `home-hub`, built on `origin/alpha_v0.3` (`07a2bf1`). Committed in `f44cd71` and `7768099` and pushed to `origin/home-hub`; not merged into `alpha_v0.3`.
 Scheduler details are in `docs/scheduling/builder_templates_prototype.md` and `docs/scheduling/direction_goals_commitments.md`. The Home page is described in `docs/guides/home.md`.
 
 ## In one paragraph

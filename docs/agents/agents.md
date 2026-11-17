@@ -12,11 +12,13 @@ Operational depth lives in `docs/agents/skills/*`.
 
 ## 2. Required Context (Load at Session Start)
 
-- `user/profile/pilot_brief.md`
-- `user/profile/preferences.md`
+- `user/profile/pilot_brief.md` (if present)
+- `user/profile/preferences.md` (if present)
 - `user/profile/preferences_settings.yml` (or equivalent)
 - `user/profile/personality.yml` (if present)
-- `user/data/trends.md` (or run sequence refresh if stale)
+- `user/data/trends.md` (if missing or stale, run `sequence trends`)
+
+Some of these files do not exist until the pilot or a wizard creates them. Skip any that are missing; it is not an error.
 
 ## 3. Safety Contract
 

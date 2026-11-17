@@ -26,6 +26,15 @@ This reference lists currently implemented dashboard endpoints. Chronos Dashboar
 - `/api/docs/tree`
 - `/api/docs/read`
 - `/api/docs/search`
+- `/api/docs/open-request` (pops the pending "open this doc" request)
+
+### POST
+- `/api/docs/open-request` (`{path, line}`: ask the dashboard to open a doc)
+
+## Home
+
+### GET
+- `/api/home/*` (only `/api/home/summary` today: read-only snapshot for the Home view, served by `utilities/dashboard/home_api.py`)
 
 ## Profile / Preferences
 
@@ -163,9 +172,20 @@ This reference lists currently implemented dashboard endpoints. Chronos Dashboar
 
 ### GET
 - `/api/trick/registry`
+- `/api/trick/open-request` (`?since=<id>`: latest TRICK open/close request newer than `id`, polled by the dashboard)
 
 ### POST
 - `/api/trick`
+
+## Thoughtforms
+
+Served by `thoughtforms/server.py`.
+
+### GET
+- `/api/thoughtforms*` (`/health`, `/bootstrap`, `/search?q=`)
+
+### POST
+- `/api/thoughtforms*` (`/query` with `{prompt}`)
 
 ## Link / Collaboration
 

@@ -1,4 +1,4 @@
-# Chronos Engine (Alpha v0.2)
+# Chronos Engine (Alpha v0.3)
 
 YAML-first life management engine with a scriptable CLI, background listener (alarms, reminders, timer), and a lightweight dashboard.
 

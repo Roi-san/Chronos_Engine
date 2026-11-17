@@ -54,7 +54,7 @@ This index maps common user intents to the skill folder to load first.
 - `docs/agents/skills/tracking_and_review/skill.md`
 - `docs/agents/skills/dashboard_ops/skill.md`
 - `docs/agents/skills/data_hygiene/skill.md`
-- `docs/agents/skills/template/skill.md`
+- `docs/agents/skills/template/skill.md` (blank skeleton for writing a new skill; not a skill to load)
 
 ## Example Multi-Skill Sequences
 

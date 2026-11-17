@@ -12,7 +12,7 @@ from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 COMMANDS_DIR = ROOT / "commands"
-SERVER_FILE = ROOT / "utilities" / "Dashboard" / "server.py"
+SERVER_FILE = ROOT / "utilities" / "dashboard" / "server.py"
 CLI_DOC = ROOT / "docs" / "reference" / "cli_commands.md"
 API_DOC = ROOT / "docs" / "reference" / "dashboard_api.md"
 DOCS_DIR = ROOT / "docs"
@@ -126,7 +126,12 @@ def validate_links() -> list[str]:
 
             path_part, _, anchor_part = target.partition("#")
             path_part = unquote(path_part.split("?", 1)[0]).strip()
-            resolved = (md_file.parent / path_part).resolve()
+            if path_part.startswith("/"):
+                # Root-relative links (e.g. /assets/...) are served from the repo root
+                # by the dashboard, not from the filesystem root.
+                resolved = (ROOT / path_part.lstrip("/")).resolve()
+            else:
+                resolved = (md_file.parent / path_part).resolve()
             if not resolved.exists():
                 errors.append(
                     f"{md_file.relative_to(ROOT)}: missing link target '{path_part}' (from '{raw_target}')"

@@ -3,36 +3,37 @@
 Chronos is a YAML-first life management engine with a scriptable CLI, background listener (alarms, reminders, timer), and a lightweight local dashboard. This document is your map: install, run, extend.
 
 Links
-- License: Legal/LICENSE.md
-- Commercial License: Legal/COMMERCIAL_LICENSE.md
-- Marketplace Terms: Legal/MARKETPLACE_TERMS.md
-- Trademark Policy: Legal/TRADEMARK_POLICY.md
-- Agent Guide: Agents/agents.md
-- Common Workflows: Guides/common_workflows.md
-- What Is Chronos?: Guides/what_is_chronos/what_is_chronos_index.md
-- Day Builder: Guides/DayBuilder.md
-- Routine Builder: Guides/RoutineBuilder.md
-- Status Mapping Wizard: Guides/Dashboard.md
-- Dock + Gadgets: Guides/Gadgets_and_Dock.md
-- Cockpit Panels: Guides/Cockpit.md
-- Canvas: Guides/Canvas.md
-- Sequence Mirrors: Dev/Sequence.md
-- Dashboard API Reference: Reference/Dashboard_API.md
-- Features Index: Features/features_index.md
-- Kairos Elements Reference: Scheduling/Kairos_Elements_Reference.md
-- Docs Freshness Audit (2026-03-06): Dev/Documentation_Audit_2026-03-06.md
+- License: legal/license.md
+- Commercial License: legal/commercial_license.md
+- Marketplace Terms: legal/marketplace_terms.md
+- Trademark Policy: legal/trademark_policy.md
+- Agent Guide: agents/agents.md
+- Common Workflows: guides/common_workflows.md
+- What Is Chronos?: guides/what_is_chronos/what_is_chronos_index.md
+- Day Builder: guides/day_builder.md
+- Routine Builder: guides/routine_builder.md
+- Status Mapping Wizard: features/dashboard/wizards/wizard_status_mapping.md
+- Dock + Gadgets: guides/gadgets_and_dock.md
+- Cockpit Panels: guides/cockpit.md
+- Canvas: guides/canvas.md
+- Sequence Mirrors: dev/sequence.md
+- Dashboard API Reference: reference/dashboard_api.md
+- Features Index: features/features_index.md
+- Kairos Elements Reference: scheduling/kairos_elements_reference.md
 
 Scripting & Automation Docs
-- CHS Scripting Guide: Dev/CHS_Scripting.md
-- Conditions Cookbook: Guides/Conditions_Cookbook.md
-- Macros (BEFORE/AFTER): Dev/Macros.md
+- CHS Scripting Guide: dev/chs_scripting.md
+- Conditions Cookbook: guides/conditions_cookbook.md
+- Macros (BEFORE/AFTER): dev/macros.md
 
 ## Structure
-- Guides/ — user-facing how-tos (Dashboard, Dock/Gadgets, Settings, Workflows, Conditions, Cockpit).
-- Dev/ — engine and API docs (Architecture, CHS Scripting, Macros, Sequence mirrors).
-- Agents/ — agent routing contract and skill library.
-- Designs/ — design notes/specs (may be aspirational; check Guides for current state).
-- Legal/ — licenses, trademarks, marketplace terms.
+- guides/ — user-facing how-tos (Dashboard, Dock/Gadgets, Settings, Workflows, Conditions, Cockpit).
+- dev/ — engine and API docs (Architecture, CHS Scripting, Macros, Sequence mirrors).
+- agents/ — agent routing contract and skill library.
+- scheduling/ — how Kairos plans a day, and its glossary.
+- features/ — one page per view, widget, wizard, panel, popup and gadget.
+- reference/ — CLI commands, dashboard API, item properties.
+- legal/ — licenses, trademarks, marketplace terms.
 
 ## Quickstart
 1) Prerequisites

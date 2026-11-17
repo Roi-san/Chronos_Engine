@@ -631,5 +631,55 @@ Manages achievement awards and progression evaluation.
 Redeems a reward and applies its target.
 **Usage:** `redeem reward <name>`
 
+## Agents, Dashboard & Shell
+
+### `skills`
+Queries the agent skills registry built from `docs/agents/skills/*/skill.md`, so an agent can find the right skill without loading every doc.
+**Usage:**
+- `skills list [q:<text>]`
+- `skills show <skill_id>`
+- `skills where q:<text>`
+- `skills refresh`
+
+### `trick`
+Queries the TRICK capability registry built from the dashboard `trick.yml` manifests: which UI surfaces and elements familiars can control. See `docs/agents/trick.md`.
+**Usage:**
+- `trick list [q:<text>] [type:<widget|view|panel|popup|gadget|wizard>]`
+- `trick show <type.name>`
+- `trick actions <type.name.element_name>`
+- `trick where action:<get|set|type|copy|paste|press|click|highlight|wait> [q:<text>]`
+- `trick refresh`
+
+### `alphagate`
+Shows or changes the alpha gate, which hides and disables unfinished features (`user/settings/alpha_gate_settings.yml`).
+**Usage:**
+- `alphagate` or `alphagate status`: current settings and effective mode.
+- `alphagate profiles`: list release profiles.
+- `alphagate alpha` / `alphagate full`: switch to the `alpha_v0_3` or `full_dev` profile.
+- `alphagate profile <name>`: switch to a named profile.
+- `alphagate show|hide`: show or hide hidden items.
+- `alphagate enable|disable`: allow or block hidden features.
+- `alphagate hidden <on|off>`, `alphagate disable_hidden <on|off>`, `alphagate dev <on|off>`: set one flag explicitly.
+- `alphagate reset`: back to the default profile with hidden features hidden and disabled.
+
+### `tray`
+Starts and stops the Chronos system-tray app (`utilities/tray/app.py`).
+**Usage:** `tray start|stop|restart|status`
+
+### `topos`
+Launches the Topos fullscreen shell prototype. Press Esc inside Topos to exit.
+**Usage:** `topos`
+
+### `tile`
+Manages Topos tiles as Chronos items.
+**Usage:**
+- `tile new <name> tile_type:<url|file|folder|group> target:<value> [icon:<icon>] [ring:<n>] [slot:<n>]`
+- `tile list`
+- `tile open <name>`
+- `tile link <name> item_type:<type> item_name:<name>`
+- `tile unlink <name>`
+- `tile add-target <name> value:<path_or_url>`
+- `tile remove-target <name> value:<path_or_url>`
+
 
 

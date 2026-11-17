@@ -3,7 +3,14 @@ import os
 import yaml
 import calendar
 from datetime import datetime, timedelta
-from modules.item_manager import get_item_path, get_user_dir
+from modules.item_manager import (
+    get_user_dir,
+    read_item_data,
+    write_item_data,
+    generic_handle_new,
+    generic_handle_append,
+    generic_handle_delete,
+)
 
 # Define the item type for this module
 ITEM_TYPE = "habit"
@@ -28,38 +35,26 @@ def get_default_properties():
 def handle_command(command, item_type, item_name, arguments, properties):
     """
     Handles habit-specific commands.
+
+    This file did not parse for a long time, so item_manager.dispatch_command
+    fell back to the generic handlers for every habit command. new / append /
+    delete stay on those generic handlers so habit files keep the same shape
+    (defaults from habit_defaults.yml, lowercase keys, core-db sync).
     """
     if command == "new":
-        # Get default properties and merge with any provided properties
-        default_properties = get_default_properties()
-        final_properties = {**default_properties, **properties}
-        final_properties['duration'] = final_properties.get('duration', 0) # Set default duration
-        # Ensure creation_date present
-        if not final_properties.get('creation_date'):
-            final_properties['creation_date'] = datetime.now().strftime("%Y-%m-%d")
-        # Ensure bad-habit fields exist for future tracking
-        final_properties.setdefault('incident_dates', [])
-        final_properties.setdefault('last_incident', None)
-        final_properties.setdefault('clean_current_streak', 0)
-        final_properties.setdefault('clean_longest_streak', 0)
-        
-        # Get the path for the new habit
-        item_path = get_item_path(item_type, item_name)
-        
-        # Create the habit file with the final properties
-        with open(item_path, 'w') as f:
-            yaml.dump(final_properties, f, default_flow_style=False)
-        
-        print(f"Habit '{item_name}' created successfully.")
+        generic_handle_new(item_type, item_name, properties)
+
+    elif command == "append":
+        generic_handle_append(item_type, item_name, arguments, properties)
+
+    elif command == "delete":
+        generic_handle_delete(item_type, item_name, properties)
 
     elif command == "track":
-        item_path = get_item_path(item_type, item_name)
-        if not os.path.exists(item_path):
+        habit_data = read_item_data(item_type, item_name)
+        if not isinstance(habit_data, dict):
             print(f"Habit '{item_name}' not found.")
             return
-
-        with open(item_path, 'r') as f:
-            habit_data = yaml.safe_load(f)
 
         print(f"--- Tracking Data for Habit: {item_name} ---")
         polarity = str(habit_data.get('polarity', 'good')).lower()
@@ -84,9 +79,9 @@ def handle_command(command, item_type, item_name, arguments, properties):
                         clean = int(habit_data.get('clean_current_streak', 0))
                 else:
                     clean = int(habit_data.get('clean_current_streak', 0))
-            print(f"  Polarity: bad (avoid)
-  Clean Streak (days without incident): {clean}
-  Longest Clean Streak: {int(habit_data.get('clean_longest_streak', 0))}")
+            print("  Polarity: bad (avoid)")
+            print(f"  Clean Streak (days without incident): {clean}")
+            print(f"  Longest Clean Streak: {int(habit_data.get('clean_longest_streak', 0) or 0)}")
             li_out = habit_data.get('last_incident') or 'N/A'
             print(f"  Last Incident: {li_out}")
         else:
@@ -123,13 +118,10 @@ def handle_command(command, item_type, item_name, arguments, properties):
             print("\n  No completion history found.")
 
     elif command == "complete":
-        item_path = get_item_path(item_type, item_name)
-        if not os.path.exists(item_path):
+        habit_data = read_item_data(item_type, item_name)
+        if not isinstance(habit_data, dict):
             print(f"Habit '{item_name}' not found.")
             return
-
-        with open(item_path, 'r') as f:
-            habit_data = yaml.safe_load(f)
 
         today = datetime.now().strftime("%Y-%m-%d")
         last_completed = habit_data.get('last_completed')
@@ -177,8 +169,7 @@ def handle_command(command, item_type, item_name, arguments, properties):
             if int(habit_data.get('current_streak', 0)) > int(habit_data.get('longest_streak', 0)):
                 habit_data['longest_streak'] = habit_data['current_streak']
 
-        with open(item_path, 'w') as f:
-            yaml.dump(habit_data, f, default_flow_style=False)
+        write_item_data(item_type, item_name, habit_data)
 
         if polarity == 'bad':
             print(f"Recorded incident for bad habit '{item_name}' today.")
