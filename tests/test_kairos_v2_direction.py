@@ -298,6 +298,38 @@ class ScaleDownForStatus(unittest.TestCase):
         self.assertIn("Gym session", _placed(schedule))
 
 
+def _priorities(goal_rank, commitment_rank):
+    return {"settings/scheduling_priorities.yml": {"Scheduling_Priorities": [
+        {"Name": "Goal Alignment", "Order": 1, "Rank": goal_rank},
+        {"Name": "Commitment Pressure", "Order": 2, "Rank": commitment_rank},
+    ]}}
+
+
+class WeightsThroughKairos(unittest.TestCase):
+    """The 0-10 weights in scheduling_priorities.yml, read the way Kairos reads them."""
+
+    def _pushed(self, goal_rank, commitment_rank):
+        schedule = _run({
+            **_priorities(goal_rank, commitment_rank),
+            "tasks/a.yml": {"name": "Write launch post", "type": "task", "duration": "45m", "goal": "Ship it"},
+            "goals/ship.yml": {"name": "Ship it", "type": "goal", "priority": "high", "due_date": "2026-04-18"},
+            "habits/gym.yml": _gym(frequency="monday"),
+            "commitments/c.yml": _commitment(),
+        })
+        return {row["identity"]: row["bonus"] for row in schedule["direction"]["pushed_items"]}
+
+    def test_rank_five_is_neutral_and_ten_doubles(self):
+        neutral = self._pushed(5, 5)
+        doubled = self._pushed(10, 10)
+        self.assertEqual(doubled["task:write launch post"], 2 * neutral["task:write launch post"])
+        self.assertEqual(doubled["habit:gym session"], 2 * neutral["habit:gym session"])
+
+    def test_rank_zero_switches_the_factor_off(self):
+        pushed = self._pushed(0, 0)
+        self.assertEqual(pushed["task:write launch post"], 0.0)
+        self.assertEqual(pushed["habit:gym session"], 0.0)
+
+
 class CommitmentTrackerAgrees(unittest.TestCase):
     def test_tracker_reads_capitalised_rule_and_counts_the_mini(self):
         from modules.commitment import main as Commitment

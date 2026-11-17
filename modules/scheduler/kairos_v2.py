@@ -2430,7 +2430,9 @@ class KairosV2Scheduler:
         for row in state.reality.get("weighted_priorities", []) if isinstance(state.reality.get("weighted_priorities"), list) else []:
             name = self._normalize_token(row.get("name"))
             rank = float(row.get("rank") or 0.0)
-            if name and rank > 0:
+            # Keep rank 0: it means "switch this factor off". Dropping the row made
+            # every caller fall back to its default weight instead.
+            if name and rank >= 0:
                 factors[name] = rank
         return factors
 
