@@ -26,6 +26,7 @@ Identical dumps mean the change did not move anything in those fake lives. When 
 | `fixed_week.py <export>` | A week with fixed-time slots that need status (a gym slot, deep work). |
 | `plan_dump.py <export>` | The base fixture day, plain. |
 | `with_breathing.py <export> <script.py>` | Runs one of the dumps above with breathing room switched on (5/5, the shipped values). |
+| `chores_month.py <export>` | Four weeks with all 26 Chore Setup chores (set up on Monday 16 November 2026); a fake user does what is planned, with a few chores skipped on purpose. Per day: the once-per-period chores planned and their state; then a summary (most on one day, which weeks each weekly chore was done). Added with recurring items (D2, 2026-11-19). |
 | `compare_days.py <before.txt> <after.txt>` | Compares two dumps day by day: same items? which times moved? any overlaps? |
 
 ## Probes (measure one behaviour)
@@ -45,6 +46,8 @@ Identical dumps mean the change did not move anything in those fake lives. When 
 ## In a real browser
 
 `brain_dump_check.js` drives the dashboard in headless Chrome: Home's **no length** tag, then the Brain Dump wizard with a Length field. Copy its pattern for other dashboard checks.
+
+`chore_setup_check.js` walks the Chore Setup wizard to the end (six built-in chores and one custom weekly chore, days picked where offered) and prints what the wizard says; `python scripts/regression/chore_files.py <export>` then lists what it really wrote (`frequency`, `day`, `duration`, `created`, and any nested `data` field). Always compare the two: the dashboard reports a console command as done whenever it exits normally (issue 23).
 
 ```bash
 npm install playwright-core@1.48.2            # in any scratch folder
