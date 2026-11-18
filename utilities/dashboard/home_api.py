@@ -80,6 +80,8 @@ _IMPORTANT_TEXT = {
     "commitment": "its commitment matters more than the strain",
     "goal": "its goal matters more than the strain",
     "priority": "its priority matters more than the strain",
+    # Recurring pressure (decision D2): a weekly to yearly item whose period is running out.
+    "recurring": "keeping its rhythm matters more than the strain",
 }
 
 
@@ -423,13 +425,16 @@ def _alpha_gate():
 
 def _direction(today):
     """
-    Goal and commitment pressure for today, keyed by item name for the Home view.
-    Uses the same module the scheduler does, so Home explains what Kairos sees.
+    Goal, commitment and recurring pressure for today, keyed by item name for
+    the Home view. Uses the same module the scheduler does, so Home explains
+    what Kairos sees. `state` drives the "last chance" / "at risk" tag; when an
+    item has both, the commitment's state wins over the recurring one.
     """
     out = {"by_name": {}, "commitments": [], "goals": [], "scaled_down": {}}
     try:
         from modules.scheduler import direction as Direction
-        loaded = Direction.load_direction(USER_DIR, datetime.now().date())
+        from modules.scheduler import periods as Periods
+        loaded = Direction.load_direction(USER_DIR, Periods.today())
     except Exception as exc:
         out["error"] = str(exc)
         return out
@@ -438,11 +443,16 @@ def _direction(today):
         row = out["by_name"].setdefault(name, {"reasons": [], "state": ""})
         commitment = signal.get("commitment") or {}
         goal = signal.get("goal") or {}
+        recurring = signal.get("recurring") or {}
         if commitment.get("reason"):
             row["reasons"].append(commitment["reason"])
             row["state"] = commitment.get("state") or ""
         if goal.get("reason"):
             row["reasons"].append(goal["reason"])
+        if recurring.get("reason"):
+            row["reasons"].append(recurring["reason"])
+            if not row["state"]:
+                row["state"] = recurring.get("state") or ""
     out["commitments"] = [
         {key: row.get(key) for key in ("name", "state", "progress", "required", "days_left", "period", "reason")}
         for row in loaded.get("commitments") or []

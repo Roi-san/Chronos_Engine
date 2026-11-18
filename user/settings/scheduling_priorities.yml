@@ -35,3 +35,7 @@ Scheduling_Priorities:
     Order: 7
     Rank: 5
     Description: Work an unmet commitment counts. Grows as the period runs out, peaks on the last possible day, and carries over after a missed period. 5 is neutral, 10 doubles the push, 0 switches it off.
+  - Name: Recurring Pressure
+    Order: 8
+    Rank: 5
+    Description: Weekly, monthly, quarterly and yearly habits and chores once their turn has come, and daily ones missed yesterday. Grows as the period runs out (docs/scheduling/recurrence_design.md). 5 is neutral, 10 doubles the push, 0 switches it off (the items are still planned on their turn).

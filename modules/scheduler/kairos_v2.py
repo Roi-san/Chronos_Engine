@@ -51,6 +51,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from . import direction as Direction
+from . import recurrence as Recurrence
 from .sleep_gate import get_active_sleep_block, normalize_sleep_policy
 from .v1 import (
     USER_DIR,
@@ -890,6 +891,11 @@ class KairosV2Scheduler:
             direction = {"by_identity": {}, "goals": [], "commitments": [], "error": str(exc)}
         direction_by_identity = direction.get("by_identity") or {}
         state.direction_by_identity = dict(direction_by_identity)
+        # Recurring items (decision D2, recurrence.py): every recurring item's
+        # status for today, loaded with goals and commitments.
+        recurring = direction.get("recurring") if isinstance(direction.get("recurring"), dict) else {}
+        recurring_by_identity = recurring.get("by_identity") or {}
+        recurring_fallback: List[str] = []
 
         # Chosen template children are included by default, except for anchors
         # that have already been committed into the skeleton.
@@ -939,17 +945,28 @@ class KairosV2Scheduler:
                 continue
 
             reasons: List[str] = []
-            if item.get("frequency") and self._frequency_applies_to_date(item.get("frequency"), state.target_date):
-                reasons.append("active_recurring_item")
+            item_identity = f"{str(item.get('type') or '').strip().lower()}:{str(item.get('name') or '').strip().lower()}"
+            # Recurring items (decision D2): on today's plan when recurrence.py
+            # says so (weekly to yearly: from its turn until done). Without a
+            # result (its history could not be read) the frequency alone decides,
+            # and a once-per-period item is shown rather than hidden.
+            if item.get("frequency"):
+                recurring_status = recurring_by_identity.get(item_identity)
+                if recurring_status is not None:
+                    recurring_due = bool(recurring_status.get("due"))
+                else:
+                    recurring_due = self._frequency_applies_to_date(item.get("frequency"), state.target_date)
+                    if recurring_due and Recurrence.parse_frequency(item.get("frequency"))["rhythm"] == "period":
+                        recurring_fallback.append(str(item.get("name") or "").strip())
+                if recurring_due:
+                    reasons.append("active_recurring_item")
             if item.get("due_date"):
                 reasons.append("has_due_date")
             if item.get("deadline"):
                 reasons.append("has_deadline")
             # Work a goal or an unmet commitment points at stays in scope even with
             # no due date and on days its own frequency would not bring it up.
-            item_direction = direction_by_identity.get(
-                f"{str(item.get('type') or '').strip().lower()}:{str(item.get('name') or '').strip().lower()}"
-            ) or {}
+            item_direction = direction_by_identity.get(item_identity) or {}
             if float((item_direction.get("commitment") or {}).get("level") or 0.0) > 0:
                 reasons.append("commitment_needs_progress")
             if float((item_direction.get("goal") or {}).get("level") or 0.0) > 0:
@@ -1028,6 +1045,7 @@ class KairosV2Scheduler:
                     "identity": identity,
                     "goal": (signal.get("goal") or {}).get("reason"),
                     "commitment": (signal.get("commitment") or {}).get("reason"),
+                    "recurring": (signal.get("recurring") or {}).get("reason"),
                     "bonus": round(Direction.bonus_for(signal, self._priority_factor_weights(state)), 1),
                 }
                 for identity, signal in sorted(direction_by_identity.items())
@@ -1052,6 +1070,10 @@ class KairosV2Scheduler:
             for candidate in candidates
             if candidate.get("duration_source") in ("steps", "default")
         ]
+        # Recurring items (D2): what is on today's plan, what waits for its turn,
+        # what is done for this period. Home explains blocks from direction's
+        # reasons; this record is for the decision log and for checking.
+        state.schedule["recurring"] = self._recurring_record(recurring, recurring_fallback)
         state.phase_notes["build_candidate_universe"] = {
             "candidate_count": len(candidates),
             "candidate_names": [candidate.get("name") for candidate in candidates],
@@ -1062,6 +1084,15 @@ class KairosV2Scheduler:
                 f"{row['name']}: {row['minutes']} min ({row['source']})"
                 for row in state.schedule["assumed_lengths"]
             ],
+            "recurring_due_today": state.schedule["recurring"]["due_today"],
+            "recurring_waiting_for_their_turn": state.schedule["recurring"]["waiting"],
+            "recurring_done_this_period": state.schedule["recurring"]["done_this_period"],
+            "recurring_added_after_their_turn": state.schedule["recurring"]["starts_next_period"],
+            "daily_items_pushed_after_a_miss": state.schedule["recurring"]["pushed_daily"],
+            "frequencies_not_understood": [
+                f"{row.get('name')}: {row.get('frequency')}" for row in state.schedule["recurring"]["unrecognised"]
+            ],
+            "recurring_shown_without_history": state.schedule["recurring"]["fallback"],
         }
         self._record_commit(
             state,
@@ -1355,11 +1386,14 @@ class KairosV2Scheduler:
         """
         How much the item matters to the pilot, on a 0-1 scale before weights.
 
-        The strongest of: commitment pressure, goal pressure (both from
-        direction.py) and the item's own `priority` (STATUS_PRIORITY_IMPORTANCE),
-        each times its 0-10 weight in scheduling_priorities.yml divided by 5
-        (Commitment Pressure, Goal Alignment, Priority Property; 5 is neutral,
-        10 doubles, 0 switches it off; a missing row counts as 5).
+        The strongest of: commitment pressure, goal pressure, recurring pressure
+        (all three from direction.py; recurring since step 1c, decision D2) and
+        the item's own `priority` (STATUS_PRIORITY_IMPORTANCE), each times its
+        0-10 weight in scheduling_priorities.yml divided by 5 (Commitment
+        Pressure, Goal Alignment, Recurring Pressure, Priority Property; 5 is
+        neutral, 10 doubles, 0 switches it off; a missing row counts as 5).
+        Recurring pressure is importance only: `_status_urgency_reason` never
+        reads it, so a chore never forces its way in the way a deadline does.
         """
         weights = self._priority_factor_weights(state)
 
@@ -1369,11 +1403,13 @@ class KairosV2Scheduler:
         direction = candidate.get("direction") if isinstance(candidate.get("direction"), dict) else {}
         commitment_level = float(((direction.get("commitment") or {}).get("level")) or 0.0)
         goal_level = float(((direction.get("goal") or {}).get("level")) or 0.0)
+        recurring_level = float(((direction.get("recurring") or {}).get("level")) or 0.0)
         priority_level = STATUS_PRIORITY_IMPORTANCE.get(self._normalize_token(candidate.get("priority")), 0.0)
         rows = [
             ("commitment", commitment_level * factor("commitment_pressure")),
             ("goal", goal_level * factor("goal_alignment")),
             ("priority", priority_level * factor("priority_property")),
+            ("recurring", recurring_level * factor(Recurrence.WEIGHT_NAME)),
         ]
         best = max(value for _, value in rows)
         return best, [{"source": source, "value": round(value, 3)} for source, value in rows if value > 0]
@@ -4291,28 +4327,68 @@ class KairosV2Scheduler:
 
     def _frequency_applies_to_date(self, frequency: Any, target_date: date) -> bool:
         """
-        Check whether a frequency rule should include the item for this date.
+        Whether a frequency alone puts an item on this date, without its history.
+
+        Since roadmap step 1c (decision D2) recurring items are decided by
+        recurrence.py with their history (see `build_candidate_universe`). This
+        is only the fallback for when that result is missing:
+        - `daily` and weekday names: exactly as before (tests/test_recurrence.py
+          compares them with a frozen copy of the old code);
+        - weekly, monthly, quarterly, yearly: shown, never hidden. (Before D2,
+          `weekly` matched every day and the others never, issue 10.)
+        - anything else: never, as before.
         """
-        if frequency is None:
-            return False
-        weekday = target_date.strftime("%A").lower()
-
-        if isinstance(frequency, list):
-            tokens = [self._normalize_token(value) for value in frequency]
-        else:
-            text = str(frequency).strip().lower()
-            if not text:
-                return False
-            tokens = [self._normalize_token(token) for token in text.replace("/", ",").split(",")]
-
-        tokens = [token for token in tokens if token]
-        if not tokens:
-            return False
-        if "daily" in tokens:
+        info = Recurrence.parse_frequency(frequency)
+        if info["rhythm"] == "period":
             return True
-        if "weekly" in tokens:
-            return True
-        return weekday in tokens
+        if info["rhythm"] in ("daily", "weekdays"):
+            return bool(Recurrence.evaluate(info, target_date, ()).get("due"))
+        return False
+
+    def _recurring_record(self, recurring: Dict[str, Any], fallback: List[str]) -> Dict[str, Any]:
+        """
+        `schedule.recurring` (decision D2, docs/scheduling/recurrence_design.md):
+        every once-per-period item with its turn, where the turn came from
+        (picked `day:` or spread), whether it is on today's plan, its push and
+        reason; daily items pushed after a miss; frequencies Kairos does not
+        understand; items shown without their history (`fallback`); and short
+        lines for the decision log.
+        """
+        keys = ("identity", "name", "type", "frequency", "created", "rhythm", "period", "turn", "turn_source",
+                "day_problem", "due", "state", "level", "missed_previous", "days_left", "done_on", "reason")
+        rows = [
+            {key: status.get(key) for key in keys}
+            for status in (recurring.get("by_identity") or {}).values()
+            if status.get("rhythm") == "period" or float(status.get("level") or 0.0) > 0
+        ]
+        rows.sort(key=lambda row: (str(row.get("name") or "").lower(), str(row.get("identity") or "")))
+        periodic = [row for row in rows if row.get("rhythm") == "period"]
+
+        def on(value: Any) -> str:
+            day = self._parse_date(value)
+            return Recurrence.describe_date(day) if day else str(value)
+
+        return {
+            "items": rows,
+            "due_today": [row["name"] for row in periodic if row.get("due")],
+            "waiting": [
+                f"{row['name']}: its {'day' if row.get('turn_source') == 'picked' else 'turn'} is {on(row.get('turn'))}"
+                for row in periodic if row.get("state") == "waiting"
+            ],
+            "done_this_period": [
+                f"{row['name']}: done on {on(row.get('done_on'))}"
+                for row in periodic if row.get("state") == "done"
+            ],
+            # Added after their turn had passed this period (design decision 9).
+            "starts_next_period": [
+                f"{row['name']}: added on {on(row.get('created'))}, after its turn ({on(row.get('turn'))}); starts next {row.get('period')}"
+                for row in periodic if row.get("state") == "starts_next_period"
+            ],
+            "pushed_daily": [row["name"] for row in rows if row.get("rhythm") == "daily"],
+            "unrecognised": list(recurring.get("unrecognised") or []),
+            "fallback": list(fallback),
+            "error": recurring.get("error"),
+        }
 
     def _discover_windows_in_structure(self, nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """

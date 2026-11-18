@@ -110,8 +110,26 @@ function injectStyles() {
     }
     .chore-custom-meta {
       display: grid;
-      grid-template-columns: 1fr 120px 120px;
+      grid-template-columns: 1fr 90px;
       gap: 6px;
+    }
+    .chore-day-select {
+      margin-top: 4px;
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+    .chore-custom-meta .chore-day-select {
+      grid-column: 1 / -1;
+      margin-top: 0;
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+    .chore-custom-meta .chore-custom-remove-btn {
+      grid-column: 1 / -1;
+      justify-self: end;
+    }
+    .chore-day-select:disabled {
+      opacity: 0.55;
     }
     .chore-custom-input,
     .chore-custom-select {
@@ -219,6 +237,72 @@ const CHORES = [
   { name: 'Review Home Emergency Kit _example', frequency: 'yearly', duration: 30, description: 'Check supplies and refresh as needed.' },
 ];
 
+// Recurring chores (roadmap step 1c, decision D2; docs/scheduling/recurrence_design.md).
+// A weekly chore can have a weekday and a monthly one a day of the month (`day:`).
+// "Any day" writes no day: Kairos then spreads it over the week or month together
+// with the other chores, so no day gets a wall of chores. The wizard does not
+// spread on its own, so there is only one spreading rule.
+const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function ordinal(n) {
+  const tens = n % 100;
+  if (tens >= 10 && tens <= 20) return `${n}th`;
+  return `${n}${({ 1: 'st', 2: 'nd', 3: 'rd' })[n % 10] || 'th'}`;
+}
+
+function fillDayOptions(select, frequency) {
+  const previous = select.value;
+  select.innerHTML = '';
+  const add = (value, label) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    select.appendChild(opt);
+  };
+  const pickable = frequency === 'weekly' || frequency === 'monthly';
+  add('', pickable ? 'Any day (Chronos spreads it)' : (frequency === 'daily' ? 'Every day' : 'Chronos spreads it'));
+  if (frequency === 'weekly') WEEKDAYS.forEach(day => add(day, day.charAt(0).toUpperCase() + day.slice(1)));
+  if (frequency === 'monthly') {
+    for (let n = 1; n <= 31; n += 1) add(String(n), n === 31 ? '31st (always the last day)' : `the ${ordinal(n)}`);
+  }
+  select.disabled = !pickable;
+  select.title = pickable
+    ? 'Pick a day, or leave "Any day" and Chronos spreads your chores over the period.'
+    : 'Quarterly and yearly chores are spread over the period by Chronos; daily ones are every day.';
+  if (Array.from(select.options).some(opt => opt.value === previous)) select.value = previous;
+}
+
+function buildDayPicker(frequency, choreName) {
+  const select = document.createElement('select');
+  select.className = 'chore-custom-select chore-day-select';
+  select.dataset.field = 'day';
+  if (choreName) select.dataset.chore = choreName;
+  fillDayOptions(select, frequency);
+  return select;
+}
+
+// The fields of a chore habit. Only meaningful fields: through the console's `new`
+// an empty list arrives as empty text (and `complete` then fails on it), and a
+// missing history, streak or length is the same as an empty one.
+function choreProperties({ frequency, duration, description }) {
+  const props = {
+    status: 'active',
+    polarity: 'good',
+    chore: true,
+    frequency,
+    tags: ['chore', frequency],
+    created: todayISO(),
+  };
+  if (description) props.description = description;
+  if (duration > 0) props.duration = duration;
+  return props;
+}
+
 function groupByFrequency(items) {
   const groups = { daily: [], weekly: [], monthly: [], quarterly: [], yearly: [] };
   items.forEach(item => {
@@ -250,7 +334,7 @@ export async function launch(context, options = {}) {
   header.className = 'chore-setup-header';
   header.innerHTML = `
     <h1>Chore Setup</h1>
-    <p>Select the default chore habits you want. These clone the _example habits into live ones.</p>
+    <p>Select the chores you want. Weekly and monthly chores can have a day; with "Any day", Chronos spreads them over the week or month so no day gets a wall of chores. A missed chore comes back every day until it is done.</p>
   `;
 
   const grid = document.createElement('div');
@@ -258,6 +342,7 @@ export async function launch(context, options = {}) {
 
   const groups = groupByFrequency(CHORES);
   const selected = new Set(CHORES.map(item => item.name));
+  const dayPickers = new Map();   // built-in chore name -> its day picker (weekly and monthly only)
   Object.entries(groups).forEach(([freq, items]) => {
     if (!items.length) return;
     const group = document.createElement('div');
@@ -276,7 +361,13 @@ export async function launch(context, options = {}) {
         else selected.delete(item.name);
       });
       const text = document.createElement('div');
-      text.innerHTML = `<strong>${item.name.replace(/ _example$/i, '')}</strong><small>${item.description} (${item.duration}m)</small>`;
+      const liveName = item.name.replace(/ _example$/i, '');
+      text.innerHTML = `<strong>${liveName}</strong><small>${item.description} (${item.duration}m)</small>`;
+      if (item.frequency === 'weekly' || item.frequency === 'monthly') {
+        const picker = buildDayPicker(item.frequency, liveName);
+        dayPickers.set(item.name, picker);
+        text.appendChild(picker);
+      }
       row.append(checkbox, text);
       group.appendChild(row);
     });
@@ -321,6 +412,9 @@ export async function launch(context, options = {}) {
       freq.appendChild(opt);
     });
 
+    const day = buildDayPicker(freq.value, '');
+    freq.addEventListener('change', () => fillDayOptions(day, freq.value));
+
     const duration = document.createElement('input');
     duration.className = 'chore-custom-input';
     duration.type = 'number';
@@ -337,13 +431,15 @@ export async function launch(context, options = {}) {
       row.remove();
     });
 
-    meta.append(freq, duration, remove);
+    // Two lines: how often and how long, then the day (full width) and Remove.
+    meta.append(freq, duration, day, remove);
     row.append(name, desc, meta);
 
     const payload = {
       nameEl: name,
       descEl: desc,
       freqEl: freq,
+      dayEl: day,
       durationEl: duration,
     };
     customRows.push(payload);
@@ -381,58 +477,71 @@ export async function launch(context, options = {}) {
   });
   if (helpBtn) shell.appendChild(helpBtn);
 
+  // Make one chore and check that it is really there. Returns 'created', 'skipped' or 'failed'.
+  // The dashboard reports a console command as done whenever it exits normally, even when
+  // it printed an error (issue 23), so the wizard used to count chores it never made.
+  async function createChore(liveName, chore, sourceName) {
+    if (await itemExists('habit', liveName)) return 'skipped';
+    try {
+      if (sourceName && await itemExists('habit', sourceName)) {
+        // The original path: copy the shipped "<name> _example" habit when it exists.
+        const extra = { created: todayISO() };
+        if (chore.day) extra.day = chore.day;
+        await apiRequest('/api/item/copy', {
+          method: 'POST',
+          body: { type: 'habit', source: sourceName, new_name: liveName, properties: extra },
+        });
+      } else {
+        // alpha_v0.3 ships no _example habits (issue 22): make the chore from this list.
+        // POST /api/item takes { type, name, properties } (a `data` key was stored as text, issue 29).
+        const props = choreProperties(chore);
+        if (chore.day) props.day = chore.day;
+        await apiRequest('/api/item', {
+          method: 'POST',
+          body: { type: 'habit', name: liveName, properties: props },
+        });
+      }
+    } catch (err) {
+      console.warn('[Chore Setup] could not create', liveName, err);
+      return 'failed';
+    }
+    return (await itemExists('habit', liveName)) ? 'created' : 'failed';
+  }
+
   createBtn.addEventListener('click', async () => {
     createBtn.disabled = true;
     statusLine.textContent = 'Creating chores...';
+    const counts = { created: 0, skipped: 0, failed: [] };
+    const tally = (result, name) => {
+      if (result === 'failed') counts.failed.push(name);
+      else counts[result] += 1;
+    };
     const selectedItems = CHORES.filter(item => selected.has(item.name));
-    let created = 0;
-    let skipped = 0;
     for (const item of selectedItems) {
       const liveName = item.name.replace(/ _example$/i, '').trim();
-      if (await itemExists('habit', liveName)) {
-        skipped += 1;
-        continue;
-      }
-      await apiRequest('/api/item/copy', {
-        method: 'POST',
-        body: { type: 'habit', source: item.name, new_name: liveName },
-      });
-      created += 1;
+      const picker = dayPickers.get(item.name);
+      const chore = {
+        frequency: item.frequency,
+        duration: item.duration,
+        description: item.description,
+        day: picker && !picker.disabled ? picker.value : '',
+      };
+      tally(await createChore(liveName, chore, item.name), liveName);
     }
     for (const row of customRows) {
       const name = row.nameEl.value.trim();
       if (!name) continue;
-      if (await itemExists('habit', name)) {
-        skipped += 1;
-        continue;
-      }
-      const frequency = row.freqEl.value;
-      const duration = parseInt(row.durationEl.value || '0', 10) || 0;
-      const description = row.descEl.value.trim();
-      const payload = {
-        name,
-        type: 'habit',
-        status: 'active',
-        polarity: 'good',
-        chore: true,
-        frequency,
-        duration,
-        description,
-        tags: ['chore', frequency],
-        completion_dates: [],
-        incident_dates: [],
-        current_streak: 0,
-        longest_streak: 0,
-        clean_current_streak: 0,
-        clean_longest_streak: 0,
+      const chore = {
+        frequency: row.freqEl.value,
+        duration: parseInt(row.durationEl.value || '0', 10) || 0,
+        description: row.descEl.value.trim(),
+        day: row.dayEl && !row.dayEl.disabled ? row.dayEl.value : '',
       };
-      await apiRequest('/api/item', {
-        method: 'POST',
-        body: { type: 'habit', name, data: payload },
-      });
-      created += 1;
+      tally(await createChore(name, chore, null), name);
     }
-    statusLine.textContent = `Created ${created} chores. Skipped ${skipped} existing.`;
+    let text = `Created ${counts.created} chores. Skipped ${counts.skipped} existing.`;
+    if (counts.failed.length) text += ` Could not create ${counts.failed.length}: ${counts.failed.join(', ')}.`;
+    statusLine.textContent = text;
     createBtn.disabled = false;
   });
 

@@ -5,11 +5,23 @@ from modules.item_manager import (
     generic_handle_new,
     generic_handle_append,
     generic_handle_delete,
+    get_user_dir,
     list_all_items,
     read_item_data,
     write_item_data,
     open_item_in_editor,
 )
+
+
+def _periods():
+    """
+    The shared day/period helper, modules/scheduler/periods.py (roadmap step 1c,
+    docs/scheduling/recurrence_design.md, "Decisions after the proposal", point 8).
+    Imported when needed, like `direction` below: loading the scheduler package
+    loads Kairos, which plain commitment commands do not need.
+    """
+    from modules.scheduler import periods as Periods
+    return Periods
 
 ITEM_TYPE = "commitment"
 
@@ -59,35 +71,67 @@ def handle_command(command, item_type, item_name, text_to_append, properties):
 
 
 def _count_in_period(dates: list[str], period: str) -> int:
-    today = datetime.now().date()
-    if period == 'week':
-        yr, wk, _ = today.isocalendar()
-        c = 0
-        for ds in dates or []:
-            try:
-                d = datetime.strptime(ds, "%Y-%m-%d").date()
-                y, w, _ = d.isocalendar()
-                if (y, w) == (yr, wk):
-                    c += 1
-            except Exception:
-                continue
-        return c
-    if period == 'month':
-        prefix = today.strftime("%Y-%m")
-        return sum(1 for ds in (dates or []) if isinstance(ds, str) and ds.startswith(prefix))
-    if period == 'day':
-        s = today.strftime("%Y-%m-%d")
-        return sum(1 for ds in (dates or []) if ds == s)
-    # Fallback: all-time
-    return len(dates or [])
+    """Completions in the current period, counted against today. Kept for other callers."""
+    return _count_in_period_on(dates, period, _periods().today())
+
+
+def _count_in_period_on(dates: list, period: str, today: date) -> int:
+    """
+    How many of `dates` fall in the period containing `today`, up to `today`.
+
+    Each entry counts, so two completions on one day count twice (per-target
+    counts such as "post 10 times a week" rely on it; the scheduler counts days
+    instead, issue 28). Since step 1c the period comes from the shared helper,
+    so the tracker and the scheduler agree on where a week (Monday to Sunday),
+    month, quarter or year starts; before, this function had its own copy and
+    counted all-time for quarters and years. An unknown period still counts
+    every entry, as before (issue 28).
+    """
+    Periods = _periods()
+    kind = Periods.normalize_period(period)
+    if not kind:
+        return len(dates or [])
+    start, _ = Periods.period_bounds(today, kind)
+    count = 0
+    for raw in dates or []:
+        day = Periods.parse_day(raw)
+        if day and start <= day <= today:
+            count += 1
+    return count
+
 
 def _period_key(d: date, period: str) -> str:
-    if period == 'week':
-        yr, wk, _ = d.isocalendar()
-        return f"{yr}-W{wk:02d}"
-    if period == 'month':
-        return d.strftime("%Y-%m")
-    return d.strftime("%Y-%m-%d")
+    """The key `last_met` / `last_violation` store: the same forms as before step 1c."""
+    Periods = _periods()
+    kind = Periods.normalize_period(period)
+    if not kind:
+        return d.strftime("%Y-%m-%d")
+    return Periods.period_key(d, kind)
+
+
+def _logged_completions(period: str, today: date) -> dict:
+    """
+    {lowercase name: days} logged as completed in the daily completion logs
+    during the current period (the period containing `today`, up to `today`).
+
+    Start day (the timer) records a completion only in these logs, never in the
+    item's `completion_dates` (issue 24), so the tracker reads them as the
+    scheduler always did. Empty for an unknown period.
+    """
+    Periods = _periods()
+    kind = Periods.normalize_period(period)
+    if not kind:
+        return {}
+    start, _ = Periods.period_bounds(today, kind)
+    try:
+        by_date = Periods.completed_names_by_date(get_user_dir(), start, today)
+    except Exception:
+        return {}
+    out: dict = {}
+    for day, names in by_date.items():
+        for name in names:
+            out.setdefault(name, set()).add(day)
+    return out
 
 def _normalize_targets(c: dict) -> list[dict]:
     # Canonical: targets
@@ -175,7 +219,24 @@ def _get_item_polarity(item_type: str, item_name: str) -> str:
         return "good"
     return str(data.get('polarity') or 'good').lower()
 
-def _get_dates_for_target(item_type: str, item_name: str, *, for_never: bool) -> list[str]:
+def _date_texts(values) -> list:
+    """
+    Completion dates as YYYY-MM-DD text, duplicates kept. A date written
+    without quotes in YAML is read as a date object; the tracker used to drop
+    those while the scheduler counted them (step 1c: now both count them).
+    """
+    out = []
+    for value in values or []:
+        if isinstance(value, datetime):
+            out.append(value.date().isoformat())
+        elif isinstance(value, date):
+            out.append(value.isoformat())
+        elif isinstance(value, str):
+            out.append(value)
+    return out
+
+
+def _get_dates_for_target(item_type: str, item_name: str, *, for_never: bool, logged: dict | None = None) -> list[str]:
     data = read_item_data(item_type, item_name)
     if not isinstance(data, dict):
         return []
@@ -184,16 +245,27 @@ def _get_dates_for_target(item_type: str, item_name: str, *, for_never: bool) ->
         if polarity == 'bad':
             dates = data.get('incident_dates') or []
             return [d for d in dates if isinstance(d, str)]
-    dates = [d for d in (data.get('completion_dates') or []) if isinstance(d, str)]
+    dates = _date_texts(data.get('completion_dates'))
     if not for_never:
+        names = [str(data.get('name') or item_name).strip().lower()]
         # A scaled-down version of the target (linked through `mini_variant` /
         # `mini_of`) counts too: doing the smaller thing keeps the promise alive.
         # The scheduler makes the same assumption when it swaps one in.
         for mini_type, mini_name in _mini_items_for(data):
             mini = read_item_data(mini_type, mini_name)
-            for d in (mini.get('completion_dates') or []) if isinstance(mini, dict) else []:
-                if isinstance(d, str) and d not in dates:
+            for d in _date_texts(mini.get('completion_dates')) if isinstance(mini, dict) else []:
+                if d not in dates:
                     dates.append(d)
+            names.append(str(mini_name).strip().lower())
+        # A day on which the item or its lighter version is logged as completed
+        # (Start day writes only the log, issue 24) but that is missing from the
+        # dates above adds one completion. A day in both places counts once.
+        if logged:
+            have = {d[:10] for d in dates}
+            for day in sorted(set().union(*(logged.get(name, set()) for name in names))):
+                if day.isoformat() not in have:
+                    dates.append(day.isoformat())
+                    have.add(day.isoformat())
     return dates
 
 def _mini_items_for(item: dict) -> list[tuple[str, str]]:
@@ -238,10 +310,13 @@ def _normalize_triggers(c: dict) -> dict:
     return triggers
 
 def get_commitment_status(c: dict, today: date | None = None) -> dict:
-    today = today or datetime.now().date()
+    # Since step 1c the day given is the one counted against (it used to be the
+    # real clock whatever was passed); with no day, the shared helper's today.
+    today = today or _periods().today()
     kind, times, period = _normalize_rule(c)
     targets = _normalize_targets(c)
     triggers = _normalize_triggers(c)
+    logged = _logged_completions(period, today) if kind == 'frequency' and targets else {}
 
     progress = 0
     required_total = times
@@ -263,8 +338,8 @@ def get_commitment_status(c: dict, today: date | None = None) -> dict:
                         continue
                     valid_target_count += 1
                     req = _target_required_count(it)
-                    dates = _get_dates_for_target(t, n, for_never=False)
-                    tgt_progress = _count_in_period(dates, period)
+                    dates = _get_dates_for_target(t, n, for_never=False, logged=logged)
+                    tgt_progress = _count_in_period_on(dates, period, today)
                     progress += tgt_progress
                     required_total += req
                     tgt_remaining = max(0, req - tgt_progress)
@@ -286,8 +361,8 @@ def get_commitment_status(c: dict, today: date | None = None) -> dict:
                     if not t or not n:
                         continue
                     valid_target_count += 1
-                    dates = _get_dates_for_target(t, n, for_never=False)
-                    tgt_progress = _count_in_period(dates, period)
+                    dates = _get_dates_for_target(t, n, for_never=False, logged=logged)
+                    tgt_progress = _count_in_period_on(dates, period, today)
                     progress += tgt_progress
                     target_progress.append({
                         "type": t,
@@ -307,7 +382,7 @@ def get_commitment_status(c: dict, today: date | None = None) -> dict:
             if not t or not n:
                 continue
             dates = _get_dates_for_target(t, n, for_never=True)
-            if _count_in_period(dates, period) > 0:
+            if _count_in_period_on(dates, period, today) > 0:
                 violation = True
                 break
         met = not violation
@@ -384,7 +459,7 @@ def evaluate_and_trigger():
           - { type: 'reward', name: '...', properties: {...} }
     """
     all_commitments = list_all_items('commitment')
-    today_dt = datetime.now().date()
+    today_dt = _periods().today()
     today_str = today_dt.strftime('%Y-%m-%d')
     for c in all_commitments:
         if not isinstance(c, dict):

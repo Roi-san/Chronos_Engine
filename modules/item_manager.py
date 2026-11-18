@@ -411,6 +411,13 @@ def generic_handle_new(item_type, item_name, properties):
     # Set default recurrence for alarms and reminders if not provided
     if item_type in ["alarm", "reminder"] and 'recurrence' not in normalized_properties:
         content['recurrence'] = ["daily"]
+    # The day it was made, for the item types Kairos plans (the folders in
+    # modules/scheduler/recurrence.py SCHEDULABLE_DIRS). A weekly to yearly item
+    # added after its turn this period starts with its next turn instead of
+    # counting as missed (roadmap step 1c, decision D2, design decision 9 in
+    # docs/scheduling/recurrence_design.md). A `created` given by the caller wins.
+    if item_type in ("habit", "task", "routine", "subroutine", "microroutine", "timeblock"):
+        content.setdefault('created', now.strftime("%Y-%m-%d"))
 
     content.update(normalized_properties)
     content['type'] = item_type

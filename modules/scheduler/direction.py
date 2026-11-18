@@ -10,20 +10,31 @@ module adds the two things that say where a life is meant to go:
   the closer the period is to ending unmet. The day it becomes "today or never",
   it gets the strongest push in the system. A period missed outright adds to the
   next one.
+- **Recurring items** (since roadmap step 1c, decision D2): a weekly to yearly
+  habit or chore whose turn has come, and a daily one missed yesterday, get a
+  push that grows as the period runs out. The rules live in recurrence.py
+  (docs/scheduling/recurrence_design.md); this module loads them with the rest
+  and adds their points in `bonus_for()`.
 
 It only reads YAML and returns plain data. Kairos decides what to do with it.
 
 Level scale: every signal carries a `level` from 0.0 (no pressure) to 1.0
 (maximum). `bonus_for()` converts levels into score points.
+
+Days, periods and "was it done" come from periods.py, the one shared helper
+(step 1c). The old names below (`period_bounds`, `previous_period_bounds`,
+`mini_names_for`, `_completed_names_by_date`, `_done_dates`) now point there.
 """
 from __future__ import annotations
 
-import calendar
 import os
-from datetime import date, timedelta
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from datetime import date
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
+
+from . import periods as Periods
+from . import recurrence as Recurrence
 
 # Score points at level 1.0, before the user's weights are applied.
 #
@@ -125,51 +136,19 @@ def _is_active(item: Dict[str, Any]) -> bool:
     return _token(item.get("status")) not in INACTIVE_STATES
 
 
-def _completed_names_by_date(user_dir: str, start: date, end: date) -> Dict[date, set]:
-    """Names marked completed on each day, from the daily completion logs."""
-    out: Dict[date, set] = {}
-    folder = os.path.join(user_dir, "schedules", "completions")
-    day = start
-    while day <= end:
-        path = os.path.join(folder, f"{day.isoformat()}.yml")
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as handle:
-                    payload = yaml.safe_load(handle) or {}
-            except Exception:
-                payload = {}
-            entries = payload.get("entries") if isinstance(payload, dict) else None
-            names = set()
-            for key, raw in (entries.items() if isinstance(entries, dict) else []):
-                entry = raw if isinstance(raw, dict) else {"status": raw}
-                if _token(entry.get("status")) not in ("completed", "done"):
-                    continue
-                name = entry.get("name") or (str(key).split("@", 1)[0] if "@" in str(key) else key)
-                if _token(name):
-                    names.add(_token(name))
-            if names:
-                out[day] = names
-        day += timedelta(days=1)
-    return out
+# Moved to periods.py in step 1c (the same answers; tests/test_periods.py compares
+# them with frozen copies of the old code). The old names stay for callers.
+_completed_names_by_date = Periods.completed_names_by_date
 
 
 # ----------------------------------------------------------------------- periods
 
-def period_bounds(day: date, period: str) -> Tuple[date, date]:
-    """First and last day of the period containing `day`. Weeks run Monday-Sunday."""
-    period = _token(period) or "week"
-    if period == "day":
-        return day, day
-    if period == "month":
-        last = calendar.monthrange(day.year, day.month)[1]
-        return day.replace(day=1), day.replace(day=last)
-    start = day - timedelta(days=day.weekday())
-    return start, start + timedelta(days=6)
-
-
-def previous_period_bounds(day: date, period: str) -> Tuple[date, date]:
-    start, _ = period_bounds(day, period)
-    return period_bounds(start - timedelta(days=1), period)
+# Moved to periods.py in step 1c. Same answers for day, week and month, and for
+# anything that is not a period (a week). New: quarter and year, and the words
+# daily / weekly / monthly / quarterly / yearly (before, all of these were read
+# as a week).
+period_bounds = Periods.period_bounds
+previous_period_bounds = Periods.previous_period_bounds
 
 
 # ------------------------------------------------------------------- commitments
@@ -207,50 +186,10 @@ def _targets(commitment: Dict[str, Any]) -> List[Dict[str, Any]]:
     return []
 
 
-def mini_names_for(item: Optional[Dict[str, Any]], library: Iterable[Dict[str, Any]]) -> List[str]:
-    """
-    Names of the scaled-down versions of an item: the one it points to through
-    `mini_variant`, and any item pointing back at it through `mini_of`.
-    """
-    if not isinstance(item, dict):
-        return []
-    def slug(value: Any) -> str:
-        text = _token(value)
-        text = text.split(":", 1)[1] if ":" in text else text
-        return text.replace(" ", "_").replace("-", "_")
-
-    name = _token(item.get("name"))
-    wanted_name = slug(item.get("mini_variant"))
-    names: List[str] = []
-    for other in library:
-        other_name = _token(other.get("name"))
-        if not other_name or other_name == name:
-            continue
-        points_back = slug(other.get("mini_of"))
-        if (wanted_name and slug(other_name) == wanted_name) or (points_back and points_back == slug(name)):
-            if other_name not in names:
-                names.append(other_name)
-    return names
-
-
-def _done_dates(
-    item: Optional[Dict[str, Any]],
-    names: Iterable[str],
-    library_by_name: Dict[str, Dict[str, Any]],
-    completed_by_date: Dict[date, set],
-) -> set:
-    """Every day one of `names` was completed: item history plus the daily logs."""
-    days: set = set()
-    for name in names:
-        source = library_by_name.get(name) or (item if item and _token(item.get("name")) == name else None)
-        for raw in (source.get("completion_dates") or []) if isinstance(source, dict) else []:
-            parsed = _parse_date(raw)
-            if parsed:
-                days.add(parsed)
-        for day, done in completed_by_date.items():
-            if name in done:
-                days.add(day)
-    return days
+# Moved to periods.py in step 1c, unchanged: "was it done" (lighter versions
+# included) is one shared question for commitments and recurring items alike.
+mini_names_for = Periods.mini_names_for
+_done_dates = Periods.done_dates
 
 
 def evaluate_commitment(
@@ -494,13 +433,26 @@ def load_direction(user_dir: str, target_date: date) -> Dict[str, Any]:
             if isinstance(ref, dict):
                 link(_identity(ref.get("type"), ref.get("name")), goal_key, via, due)
 
+    # ---- the completion logs, read once for commitments and recurring items
+    commitments = [c for c in _read_dir(user_dir, "commitments") if _is_active(c)]
+    # Before step 1c the window was the previous week and month; it still is,
+    # widened for quarter and year commitments and for recurring items.
+    window = [previous_period_bounds(target_date, "month")[0], previous_period_bounds(target_date, "week")[0]]
+    window.extend(previous_period_bounds(target_date, _rule(c)[2])[0] for c in commitments)
+    # A failure in recurring items must never cost goals and commitments: Kairos
+    # then shows every once-per-period item (its fallback) and says so.
+    recurring_items: Optional[List[Dict[str, Any]]] = None
+    recurring_error: Optional[str] = None
+    try:
+        recurring_items = Recurrence.read_library(user_dir)
+        window.append(Recurrence.log_window_start(target_date, recurring_items))
+    except Exception as exc:
+        recurring_items, recurring_error = None, str(exc)
+    completed_by_date = _completed_names_by_date(user_dir, min(window), target_date)
+
     # ---- commitments
-    earliest = min(previous_period_bounds(target_date, "month")[0], previous_period_bounds(target_date, "week")[0])
-    completed_by_date = _completed_names_by_date(user_dir, earliest, target_date)
     commitment_rows: List[Dict[str, Any]] = []
-    for commitment in _read_dir(user_dir, "commitments"):
-        if not _is_active(commitment):
-            continue
+    for commitment in commitments:
         status = evaluate_commitment(
             commitment,
             target_date=target_date,
@@ -534,6 +486,21 @@ def load_direction(user_dir: str, target_date: date) -> Dict[str, Any]:
             if current is None or signal["level"] > current["level"]:
                 by_identity[row["identity"]]["commitment"] = signal
 
+    # ---- recurring items (decision D2, recurrence.py)
+    # `recurring.by_identity` holds every recurring item's status: Kairos reads
+    # it to decide what is on today's plan. Only items with a push today (a turn
+    # that has come, a daily item missed yesterday) also get a signal here.
+    recurring: Dict[str, Any] = {"by_identity": {}, "unrecognised": [], "error": recurring_error}
+    if recurring_items is not None:
+        try:
+            recurring = Recurrence.evaluate_library(recurring_items, target_date, completed_by_date)
+        except Exception as exc:
+            recurring = {"by_identity": {}, "unrecognised": [], "error": str(exc)}
+    for identity, status in (recurring.get("by_identity") or {}).items():
+        signal = Recurrence.pressure_signal(status)
+        if signal:
+            by_identity.setdefault(identity, {})["recurring"] = signal
+
     return {
         "by_identity": by_identity,
         "goals": [
@@ -547,6 +514,7 @@ def load_direction(user_dir: str, target_date: date) -> Dict[str, Any]:
             for row in goal_rows.values()
         ],
         "commitments": commitment_rows,
+        "recurring": recurring,
     }
 
 
@@ -555,8 +523,8 @@ def bonus_for(signal: Optional[Dict[str, Any]], factor_weights: Optional[Dict[st
     Score points for one candidate's direction signal.
 
     `factor_weights` is Kairos's map from scheduling_priorities.yml. The rows
-    "Goal Alignment" and "Commitment Pressure" scale these bonuses; rank 5 is
-    neutral, 10 doubles, 0 switches the factor off.
+    "Goal Alignment", "Commitment Pressure" and "Recurring Pressure" scale these
+    bonuses; rank 5 is neutral, 10 doubles, 0 switches the factor off.
     """
     if not isinstance(signal, dict):
         return 0.0
@@ -570,6 +538,10 @@ def bonus_for(signal: Optional[Dict[str, Any]], factor_weights: Optional[Dict[st
     if isinstance(commitment, dict):
         factor = float(weights.get("commitment_pressure", DEFAULT_FACTOR_RANK)) / DEFAULT_FACTOR_RANK
         total += COMMITMENT_MAX_BONUS * float(commitment.get("level") or 0.0) * factor
+    recurring = signal.get("recurring")
+    if isinstance(recurring, dict):
+        factor = float(weights.get(Recurrence.WEIGHT_NAME, DEFAULT_FACTOR_RANK)) / DEFAULT_FACTOR_RANK
+        total += Recurrence.RECURRING_MAX_BONUS * float(recurring.get("level") or 0.0) * factor
     return total
 
 
