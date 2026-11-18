@@ -2,6 +2,14 @@
 
 This index points to the main documentation entry points in this repo and what each file covers.
 
+## Working on the `home-hub-fixes` branch
+- Start Here: `docs/START_HERE.md` - orientation for a new person or session: what Chronos is, the philosophy, where code lives, Kairos v2 in one page, how to work and test.
+- Roadmap: `docs/ROADMAP.md` - the agreed strategy, phases and open decisions.
+- Issues and Next Steps: `docs/ISSUES_AND_NEXT_STEPS.md` - every known issue with a number, next tasks, what is done.
+- Work Log: `docs/WORKLOG.md` - every change in order, with why, what, where and how it was checked.
+- Home Hub Handover: `docs/HOME_HUB_HANDOVER.md` - what the branches changed, for the original author.
+- Regression scripts: `scripts/regression/README.md` - fake-life plan dumps, probes and a browser check.
+
 ## Core
 - Documentation Home: `docs/readme.md` - product overview, quickstart, and top-level feature map.
 - Documentation Overview: `docs/documentation_overview.md` - consolidated summary of architecture, features, workflows, and command surface.
