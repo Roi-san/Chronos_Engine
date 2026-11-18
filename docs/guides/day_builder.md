@@ -98,7 +98,7 @@ Template-level metadata editor supports:
 
 - `Auto Buffers/Breaks` (with toggles for buffers and breaks)
   - Reads:
-- `user/settings/buffer_settings.yml`
+- `user/settings/buffer_settings.yml` (Kairos also reads its `global_dynamic_buffer` when it plans the day, as breathing room between items and around fixed blocks; see `docs/scheduling/gaps_and_breathing_room.md`)
 - `user/settings/timer_settings.yml`
 - `user/settings/timer_profiles.yml`
 - `Snap 5m`

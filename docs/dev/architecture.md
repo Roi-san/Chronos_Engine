@@ -34,7 +34,7 @@ Items are the atoms of Chronos. They are stored as YAML files in the `user/` dir
   8. `shape_week`, `populate_day_and_windows`, `narrow_window_candidate_pools`, `select_window_contents`: lay out fixed-time structure and fill windows by tag/category filter and score.
   9. `handle_gaps_buffers_and_recovery`, `build_runtime_helper_windows`, `place_remaining_structure`: fill gaps, open helper windows for urgent work the template has no place for ("Deadline Window", "Due Window", "Commitment Window", "Goal Window", "Manual Opportunity Window", "Best Next Window" for `inject:next`), place remaining items.
   10. `run_pressure_relief_pipeline`: on overflow, lighter versions, then trims, then cuts, only on items that allow them.
-  11. `fill_quick_wins`, `finalize_conceptual_schedule`, `build_timer_handoff`, `persist_decision_log_artifact`.
+  11. `fill_quick_wins`, `finalize_conceptual_schedule`, `build_timer_handoff`, `persist_decision_log_artifact`. Building the conceptual blocks ends with breathing room (`_apply_breathing_room`): margins from `buffer_settings.yml` around placed work, using only spare time (`docs/scheduling/gaps_and_breathing_room.md`).
 - **Inputs**: Kairos v2 reads the YAML files under `user/` directly (`days`, `weeks`, `habits`, `tasks`, `routines`, `subroutines`, `microroutines`, `timeblocks`, goals, milestones, commitments, `settings`). It does not read the SQLite mirrors, and trend input is a placeholder that does not affect planning yet. Which item properties it honors: `docs/reference/item_properties.md`.
 - **Supporting modules** in `modules/scheduler/`:
   - `direction.py`: goal and commitment pressure (`docs/scheduling/direction_goals_commitments.md`).

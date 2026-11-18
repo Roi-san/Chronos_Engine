@@ -88,6 +88,18 @@ SLEEP_AFTER_MIDNIGHT_BEFORE_MINUTE = 12 * 60
 # takes 00:00 as the start of a day, so an end of 24:00 would be misread.
 PLAN_LAST_MINUTE_OF_DAY = 24 * 60 - 1
 
+# Gaps and breathing room (docs/scheduling/gaps_and_breathing_room.md).
+# Urgent work opens its helper window in the earliest gap it fits in. This used
+# to be 30, so urgent work jumped over smaller gaps that ordinary work then took.
+# `runtime_helper_windows.minimum_gap_minutes` in scheduling_settings.yml still
+# overrides it.
+RUNTIME_HELPER_DEFAULT_MIN_GAP_MINUTES = 1
+# Breathing room comes from buffer_settings.yml `global_dynamic_buffer`; with no
+# such section it is off. Keys missing inside the section get the defaults the
+# archived v1 scheduler used.
+BREATHING_ROOM_DEFAULT_MINUTES = 5
+BREATHING_ROOM_DEFAULT_INTERVAL_MINUTES = 45
+
 
 @dataclass
 class KairosV2RunState:
@@ -4529,12 +4541,14 @@ class KairosV2Scheduler:
         scheduling_settings = state.gathered.get("settings", {}).get("scheduling_settings", {}) or {}
         payload = scheduling_settings.get("runtime_helper_windows", {}) if isinstance(scheduling_settings, dict) else {}
         enabled = payload.get("enabled", True)
-        minimum_gap_minutes = payload.get("minimum_gap_minutes", payload.get("min_gap_minutes", 30))
+        minimum_gap_minutes = payload.get(
+            "minimum_gap_minutes", payload.get("min_gap_minutes", RUNTIME_HELPER_DEFAULT_MIN_GAP_MINUTES)
+        )
         max_windows_per_day = payload.get("maximum_windows_per_day", payload.get("max_windows_per_day", 2))
         try:
             minimum_gap_minutes = max(1, int(minimum_gap_minutes))
         except Exception:
-            minimum_gap_minutes = 30
+            minimum_gap_minutes = RUNTIME_HELPER_DEFAULT_MIN_GAP_MINUTES
         try:
             max_windows_per_day = max(0, int(max_windows_per_day))
         except Exception:
@@ -6157,6 +6171,8 @@ class KairosV2Scheduler:
                 {
                     "kind": "window",
                     "name": window.get("window_name"),
+                    # Kairos-made helper windows sit in emergent gaps; authored ones are fixed.
+                    "runtime_helper": bool(window.get("runtime_helper")),
                     "start_time": window.get("start_time"),
                     "end_time": window.get("end_time"),
                     "start_minutes": window.get("start_minutes"),
@@ -6268,6 +6284,7 @@ class KairosV2Scheduler:
                 }
             )
 
+        blocks = self._apply_breathing_room(blocks, state)
         blocks.sort(
             key=lambda item: (
                 item.get("start_minutes") if item.get("start_minutes") is not None else 10**9,
@@ -6282,6 +6299,236 @@ class KairosV2Scheduler:
                 if int(block.get("end_minutes") or -1) > floor
             ]
         return blocks
+
+    def _breathing_room_settings(self, state: KairosV2RunState) -> Dict[str, int]:
+        """
+        Minutes of breathing room and how much continuous work earns them.
+
+        Read from buffer_settings.yml `global_dynamic_buffer` (the setting the
+        Day Builder and Routine Builder show): `buffer_duration_minutes` and
+        `buffer_interval_minutes`. No such section: off (0 minutes).
+        """
+        payload = state.gathered.get("settings", {}).get("buffer_settings", {}) or {}
+        section = payload.get("global_dynamic_buffer") if isinstance(payload, dict) else None
+        if not isinstance(section, dict):
+            return {"minutes": 0, "interval_minutes": 0}
+        minutes = self._coerce_minutes(section.get("buffer_duration_minutes"))
+        interval = self._coerce_minutes(section.get("buffer_interval_minutes"))
+        return {
+            "minutes": BREATHING_ROOM_DEFAULT_MINUTES if minutes is None else int(minutes),
+            "interval_minutes": BREATHING_ROOM_DEFAULT_INTERVAL_MINUTES if interval is None else int(interval),
+        }
+
+    def _apply_breathing_room(self, blocks: List[Dict[str, Any]], state: KairosV2RunState) -> List[Dict[str, Any]]:
+        """
+        Leave breathing room around placed work, using only slack the day already has.
+
+        Runs on the finished layout, after every placement and relief pass, so it
+        never changes *what* is planned, only *where* inside its free stretch:
+        - work in an emergent gap (gap fills, quick wins, Kairos helper windows)
+          gets a margin after a fixed block, between items, and before the next
+          fixed block (anchors, fixed-time slots, authored windows, free and
+          buffer blocks are fixed);
+        - work inside an authored window, free or buffer block gets margins
+          between items and stays inside that block.
+        Nothing moves earlier, the first item after "now" starts now, and nothing
+        is placed past the end of its stretch. When the slack is too small for
+        every margin, the one before a fixed block comes first, then those
+        between items, then the one after a fixed block.
+        """
+        settings = self._breathing_room_settings(state)
+        margin = int(settings["minutes"])
+        interval = int(settings["interval_minutes"])
+        record: Dict[str, Any] = {
+            "minutes": margin,
+            "interval_minutes": interval,
+            "source": "buffer_settings.global_dynamic_buffer" if margin > 0 else "off",
+            # Margins inserted after a fixed block or between items (they move work later).
+            "margins_added": 0,
+            # Margins kept free before a fixed block (nothing moves for these).
+            "margins_before_fixed_blocks": 0,
+            "items_moved": 0,
+        }
+        state.schedule["breathing_room"] = record
+        if margin <= 0:
+            return blocks
+
+        def kind_of(block: Dict[str, Any]) -> str:
+            return str(block.get("kind") or "").strip().lower()
+
+        def is_fixed_container(block: Dict[str, Any]) -> bool:
+            kind = kind_of(block)
+            return kind in {"free", "buffer"} or (kind == "window" and not block.get("runtime_helper"))
+
+        def is_movable_container(block: Dict[str, Any]) -> bool:
+            kind = kind_of(block)
+            return kind in {"gap_fill", "quick_wins"} or (kind == "window" and bool(block.get("runtime_helper")))
+
+        def minutes_of(node: Dict[str, Any], key: str) -> Optional[int]:
+            value = node.get(f"{key}_minutes")
+            if value is not None:
+                try:
+                    return int(value)
+                except Exception:
+                    return None
+            return self._parse_hm(node.get(f"{key}_time"))
+
+        # Work inside fixed containers: margins between items only.
+        for block in blocks:
+            children = block.get("children") or []
+            if not is_fixed_container(block) or len(children) < 2:
+                continue
+            start, end = minutes_of(block, "start"), minutes_of(block, "end")
+            if start is None or end is None or end <= start:
+                continue
+            spaced = self._space_items(
+                [deepcopy(child) for child in children], start, end, margin, interval,
+                after_block=False, before_block=False, record=record,
+            )
+            if spaced is not None:
+                block["children"] = spaced
+
+        # Work in emergent gaps: the stretches between fixed spans.
+        fixed_spans = sorted(
+            (minutes_of(block, "start"), minutes_of(block, "end"))
+            for block in blocks
+            if (kind_of(block) in {"anchor", "fixed_time"} or is_fixed_container(block))
+            and minutes_of(block, "start") is not None
+            and minutes_of(block, "end") is not None
+        )
+        floor = (
+            max(
+                int(state.reality.get("minutes_elapsed_since_start_of_day") or 0),
+                self._sleep_policy_floor_minutes(state),
+            )
+            if state.target_date == state.now.date()
+            else 0
+        )
+        plan_end = int(state.schedule.get("day_budget", {}).get("sleep_boundary_minutes") or PLAN_LAST_MINUTE_OF_DAY)
+
+        segments: Dict[tuple, Dict[str, Any]] = {}
+        for block in blocks:
+            if not is_movable_container(block):
+                continue
+            block["children"] = [deepcopy(child) for child in (block.get("children") or [])]
+            for index, child in enumerate(block["children"]):
+                start, end = minutes_of(child, "start"), minutes_of(child, "end")
+                if start is None or end is None:
+                    continue
+                previous_ends = [span_end for span_start, span_end in fixed_spans if span_end <= start]
+                next_starts = [span_start for span_start, span_end in fixed_spans if span_start >= end]
+                after_block = bool(previous_ends) and max(previous_ends) >= floor
+                segment_start = max(previous_ends) if after_block else floor
+                before_block = bool(next_starts) and min(next_starts) <= plan_end
+                segment_end = min(next_starts) if before_block else max(plan_end, end)
+                key = (segment_start, segment_end)
+                segment = segments.setdefault(
+                    key, {"after_block": after_block, "before_block": before_block, "members": []}
+                )
+                segment["members"].append((block, index, child))
+
+        for (segment_start, segment_end), segment in segments.items():
+            members = sorted(segment["members"], key=lambda row: minutes_of(row[2], "start") or 0)
+            spaced = self._space_items(
+                [row[2] for row in members], segment_start, segment_end, margin, interval,
+                after_block=segment["after_block"], before_block=segment["before_block"], record=record,
+            )
+            if spaced is None:
+                continue
+            for (block, index, _), child in zip(members, spaced):
+                block["children"][index] = child
+
+        for block in blocks:
+            if not is_movable_container(block) or not block.get("children"):
+                continue
+            starts = [minutes_of(child, "start") for child in block["children"] if minutes_of(child, "start") is not None]
+            ends = [minutes_of(child, "end") for child in block["children"] if minutes_of(child, "end") is not None]
+            if not starts or not ends:
+                continue
+            block["start_minutes"], block["end_minutes"] = min(starts), max(ends)
+            block["start_time"], block["end_time"] = self._minutes_to_hm(min(starts)), self._minutes_to_hm(max(ends))
+            if kind_of(block) == "gap_fill":
+                block["name"] = f"Gap Fill {block['start_time']}-{block['end_time']}"
+            elif kind_of(block) == "quick_wins":
+                block["name"] = f"Quick Wins {block['start_time']}-{block['end_time']}"
+        return blocks
+
+    def _space_items(
+        self,
+        items: List[Dict[str, Any]],
+        start: int,
+        end: int,
+        margin: int,
+        interval: int,
+        *,
+        after_block: bool,
+        before_block: bool,
+        record: Dict[str, Any],
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Re-lay `items` (in order) inside [start, end] with breathing room, or None to leave them.
+
+        A margin is a candidate after a fixed block (when the stretch follows
+        one), between two items once `interval` minutes of work have run without
+        a break, and before a fixed block (when one follows). Only whole margins
+        are added, and only from the stretch's slack.
+        """
+        durations = []
+        for item in items:
+            duration = item.get("duration_minutes")
+            if duration is None:
+                item_start = item.get("start_minutes")
+                item_end = item.get("end_minutes")
+                if item_start is None or item_end is None:
+                    return None
+                duration = int(item_end) - int(item_start)
+            durations.append(max(0, int(duration)))
+        if not items:
+            return None
+        slack = int(end) - int(start) - sum(durations)
+        if slack < margin:
+            return None
+
+        work = float("inf") if after_block else 0.0
+        has_previous = after_block
+        margin_before: List[int] = []
+        for index, duration in enumerate(durations):
+            if has_previous and work >= interval:
+                margin_before.append(index)
+                work = 0.0
+            work += duration
+            has_previous = True
+        end_candidate = before_block and work >= interval
+
+        budget = slack
+        allocated: set[int] = set()
+        if end_candidate and budget >= margin:
+            budget -= margin
+            record["margins_before_fixed_blocks"] += 1
+        for index in [i for i in margin_before if i > 0] + [i for i in margin_before if i == 0]:
+            if budget >= margin:
+                allocated.add(index)
+                budget -= margin
+                record["margins_added"] += 1
+
+        cursor = int(start)
+        spaced: List[Dict[str, Any]] = []
+        for index, (item, duration) in enumerate(zip(items, durations)):
+            if index in allocated:
+                cursor += margin
+            new_item = dict(item)
+            old_start = item.get("start_minutes")
+            if old_start is None:
+                old_start = self._parse_hm(item.get("start_time"))
+            if old_start is None or int(old_start) != cursor:
+                record["items_moved"] += 1
+            new_item["start_minutes"] = cursor
+            new_item["end_minutes"] = cursor + duration
+            new_item["start_time"] = self._minutes_to_hm(cursor)
+            new_item["end_time"] = self._minutes_to_hm(cursor + duration)
+            spaced.append(new_item)
+            cursor += duration
+        return spaced
 
     def _build_timer_execution_units(self, state: KairosV2RunState) -> List[Dict[str, Any]]:
         """

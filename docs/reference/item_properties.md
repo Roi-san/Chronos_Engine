@@ -109,6 +109,13 @@ A window is a template node that Kairos fills with the best-ranked matching cand
   Other filter keys (type, priority, custom properties) are not applied.
 - `category` on the window itself (without a filter) is a soft preference: matching items score higher but others can still fill it.
 
+### Gaps and breathing room
+
+Verified 2026-11-18. Full rule and decisions: `docs/scheduling/gaps_and_breathing_room.md`.
+
+- Flexible work fills the free gaps between fixed blocks, highest score first, earliest gap first. Urgent work (due today, deadline, a strong goal or commitment push, added by hand) opens a helper window in the **earliest gap it fits in**. `scheduling_settings.yml` `runtime_helper_windows.minimum_gap_minutes` can demand a bigger gap; the default is any gap that fits (it was 30 minutes).
+- **Breathing room**: `buffer_settings.yml` `global_dynamic_buffer` (`buffer_duration_minutes`, `buffer_interval_minutes`, shipped 5 and 5). Kairos leaves that margin after a fixed block, between items once the interval of work has run, and before the next fixed block, but only where the stretch has spare time. It never changes which items are planned. The margin before a fixed block wins when there is room for only one. With no `global_dynamic_buffer` section it is off. `template_buffers` are not applied.
+
 ### Timeblocks
 
 - `type: timeblock`

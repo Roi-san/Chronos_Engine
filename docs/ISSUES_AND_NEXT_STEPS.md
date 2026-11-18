@@ -11,7 +11,6 @@ Last updated: 2026-11-18.
 
 | # | Problem | Where | Found |
 |---|---|---|---|
-| 2 | **Work is placed after a fixed slot rather than before it.** At 22:05 with Gym fixed at 22:30, a 20-minute task went to 23:15, although 22:07-22:27 was free. Happens with no status involved. | `kairos_v2.py`, gap / remaining-structure placement | 2026-11-17, step 3 end-to-end test |
 | 3 | **`python modules/console.py today reschedule` segfaults on exit** (exit 139) when its output is redirected to a file or pipe. The schedule is written before the crash; not seen from the dashboard. Also on the commit before step 3, and again on 2026-11-18 on untouched `04bc2f0`. | console shutdown (likely a native library at exit) | 2026-11-17 |
 | 4 | **Completing the same item again on the same day awards points again**; nothing limits it to once a day. Re-check before fixing. | `commands/complete.py` -> `utilities/completion_effects.py` | 2026-11-17, first review |
 | 5 | **The registry lists the blank skill template as if it were a real skill.** | `utilities/registry_builder.py`, skills scan (`templates` is not skipped) | 2026-11-17, first review |
@@ -27,7 +26,7 @@ Older open problems for the friend (task without due date never considered, zero
 | # | Task | Notes |
 |---|---|---|
 | 1 | Keep `origin/home-hub-fixes` up to date: push after each commit. | Pushed through the issue 1 fix on 2026-11-18. |
-| 2 | Fix issue 2 (work placed after a fixed slot rather than before it). | Suggested next scheduler fix. |
+| 2 | Decide how light days should be laid out (pack from now, or spread out). | Open decision with the options: `docs/scheduling/gaps_and_breathing_room.md`, "Open decision: light days". |
 | 3 | No automated test for habits (`modules/habit/main.py` was broken on upstream for a long time without any test noticing). | Write tests for new / track / complete / delete. |
 | 4 | Stale scheduling docs still describe the archived v1 scheduler (`kairos.py`, `weekly_generator.py`), including `today kairos week`. | `docs/scheduling/scheduling_algorithm_overview.md`, `scheduling_algorithm_deep_dive.md`, `docs/agents/skills/scheduling/skill.md`, `docs/changelog.md` |
 | 5 | Release notes for this branch's changes. | `docs/changelog.md` |
@@ -51,7 +50,8 @@ From `docs/scheduling/sleep_after_midnight.md`, "Future":
 
 | Commit | What |
 |---|---|
-| (this commit) | Issue 1: a bedtime after midnight no longer empties the day (the plan runs to 23:59, or to the bedtime when it is past midnight and still ahead). Also: no sleep block plans until 23:59 instead of 16:00; "go back to sleep" / "shift today later" plan from wake-up instead of planning no flexible work. `docs/scheduling/sleep_after_midnight.md` |
+| (this commit) | Issue 2: urgent work takes the earliest gap it fits (it used to jump over gaps under 30 minutes to a later one), and breathing room: the 5 minutes of `buffer_settings.yml` between items and around fixed blocks, only where the day has room, never changing what is planned. `docs/scheduling/gaps_and_breathing_room.md` |
+| `d652300` | Issue 1: a bedtime after midnight no longer empties the day (the plan runs to 23:59, or to the bedtime when it is past midnight and still ahead). Also: no sleep block plans until 23:59 instead of 16:00; "go back to sleep" / "shift today later" plan from wake-up instead of planning no flexible work. `docs/scheduling/sleep_after_midnight.md` |
 | `04bc2f0` | Status scale-down step 3: Home "Saved for a better day" + Add back, "tough today" kept notes; Add back restores a fixed slot's time |
 | `9c7da21` | Status scale-down step 2: fixed template slots |
 | `4b2c818` | Status scale-down step 1: flexible items |
@@ -64,6 +64,7 @@ From `docs/scheduling/sleep_after_midnight.md`, "Future":
 
 - Status scale-down plan, decisions and step-by-step log: `docs/scheduling/status_scale_down_design.md`
 - Where the day ends (bedtimes after midnight, no sleep block, the sleep prompt): `docs/scheduling/sleep_after_midnight.md`
+- Gaps, urgent work and breathing room, plus the open "light days" decision: `docs/scheduling/gaps_and_breathing_room.md`
 - Goals and commitments in scheduling: `docs/scheduling/direction_goals_commitments.md`
 - Everything the `home-hub` branch changed: `docs/HOME_HUB_HANDOVER.md`
 - Item fields and what Kairos does with them: `docs/reference/item_properties.md`

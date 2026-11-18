@@ -28,6 +28,7 @@ The dashboard now opens on a **Home** page: what to do right now, today's plan, 
 - **Goals and commitments are ranking factors** (`modules/scheduler/direction.py`). Work linked to a goal ranks higher as its date nears; work a commitment counts ranks higher as the period runs out, peaks on the last possible day, and gets extra push after a missed period.
 - **Scale-down.** When today's status does not fit an item and a lighter version was authored (`mini_of`), Kairos schedules the lighter one, and it still counts toward the commitment.
 - **Where the day ends** (`home-hub-fixes`, 2026-11-18). A bedtime after midnight (e.g. 02:00) used to empty the whole day. Now the plan runs to 23:59, or up to the bedtime when it is past midnight and the bedtime is still ahead. No sleep block plans to 23:59 instead of 16:00. "Go back to sleep" in the sleep prompt plans from wake-up instead of planning no flexible work. `docs/scheduling/sleep_after_midnight.md`.
+- **Gaps and breathing room** (`home-hub-fixes`, 2026-11-18). Urgent work takes the earliest gap it fits (helper windows used to need 30+ minutes, so urgent work went after a fixed slot while ordinary work took the gap before it). The `global_dynamic_buffer` in `buffer_settings.yml`, ignored by v2 until now, adds 5 minutes between items and around fixed blocks where there is room. "Light days" (pack or spread) is an open decision. `docs/scheduling/gaps_and_breathing_room.md`.
 
 ### Bugs fixed elsewhere
 - `new` ignored the properties you gave it (a 30-minute task was saved with duration 0).
