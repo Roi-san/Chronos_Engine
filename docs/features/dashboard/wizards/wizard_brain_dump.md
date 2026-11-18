@@ -2,6 +2,7 @@
 
 ## Overview
 Rapid capture workflow to turn raw thoughts into structured Chronos items.
+Steps: Capture (one task per line), Sort (by horizon), Refine (priority, due date, length in minutes, tags). A task left without a length is planned with the default length (`default_duration_minutes`, 30); see `docs/scheduling/item_lengths.md`.
 Wizards should produce deterministic item/settings outcomes that remain editable through normal CLI and dashboard tools.
 
 ## CLI

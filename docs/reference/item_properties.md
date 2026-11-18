@@ -1,6 +1,6 @@
 # Standard Item Properties
 
-Last verified: 2026-11-17 (timeblock breaks and the timer: 2026-11-18) against `modules/scheduler/kairos_v2.py`, `modules/scheduler/runtime.py`, `modules/scheduler/direction.py`, `modules/scheduler/v1.py` (template helpers), `modules/scheduler/sleep_gate.py` and `modules/item_manager.py`.
+Last verified: 2026-11-17 (timeblock breaks and the timer, and assumed lengths: 2026-11-18) against `modules/scheduler/kairos_v2.py`, `modules/scheduler/runtime.py`, `modules/scheduler/direction.py`, `modules/scheduler/v1.py` (template helpers), `modules/scheduler/sleep_gate.py` and `modules/item_manager.py`.
 
 This is a practical reference of item properties that Chronos actively uses today, with the emphasis on what the active scheduler (**Kairos v2**) does with each one. Where a property is written by a builder or wizard but ignored by Kairos v2, it is listed under [Not read by Kairos v2](#not-read-by-kairos-v2).
 
@@ -14,8 +14,18 @@ Keys are case-insensitive at the top level of an item file: `Name:` and `name:` 
 - `tags` (list): Used by window filters, dashboards and `list`/`find`/`for` filters. Always stored as a list; a comma string given on the console is split.
 - `category` (string): Ranked in `user/settings/category_settings.yml`; used in scoring and in window filters.
 - `priority` (string): Ranked in `user/settings/priority_settings.yml`; used in scoring.
-- `duration` (number or string): Length in minutes. Accepted: `30`, `"30"`, `1h`, `1.5h`, `15m`, `90 min`, `1h30m`, `2h 15m`. An item with no usable duration cannot be placed.
+- `duration` (number or string): Length in minutes. Accepted: `30`, `"30"`, `1h`, `1.5h`, `15m`, `90 min`, `1h30m`, `2h 15m`. Since 2026-11-18 an item without a usable length is still planned (see [Lengths Kairos assumes](#lengths-kairos-assumes)); before, it could never be placed.
 - `sleep` (bool): Canonical sleep marker. Kairos also treats an anchor as sleep when its category is `sleep`, it is tagged `sleep`, or its name contains "sleep" or "bedtime". Prefer `sleep: true`. A sleep anchor in the day template sets where the plan ends; see [Bedtime: where the plan ends](#bedtime-where-the-plan-ends).
+
+### Lengths Kairos assumes
+
+Decided 2026-11-18 (D1). Full rule, tests and verification: `docs/scheduling/item_lengths.md`.
+
+- An item's own length always wins; a block with a start and an end time is as long as that span.
+- A **task or habit** with no length (or `duration: 0`, which `new` writes) is planned for `default_duration_minutes` from `user/settings/scheduling_settings.yml`, 30 minutes when not set.
+- A **routine, subroutine or microroutine** with no length of its own is planned as one block for the total of its steps' lengths (steps without a length count 0; nested routines add up). If none of its steps has a length, the routine gets the default once. Its steps are covered by that block, so they are not planned a second time.
+- Anchors, sleep blocks, windows and timeblocks are left alone.
+- Every assumed length is listed in `schedule.assumed_lengths` (`source`: `default` or `steps`). Home tags blocks planned with the default **no length** and says why in their tooltip.
 
 ## How an item gets into a day (Kairos v2)
 
@@ -34,7 +44,7 @@ Library items are always skipped when they are bad habits (`polarity: bad`), anc
 
 ### Recurrence
 
-- `frequency` (string or list): `daily`, a weekday name (`monday` ... `sunday`), or several, as a list or a comma/slash string (`monday, wednesday`). `weekly` currently matches **every** day: Kairos does not track which day of the week a weekly item belongs to, so give weekday names instead.
+- `frequency` (string or list): `daily`, a weekday name (`monday` ... `sunday`), or several, as a list or a comma/slash string (`monday, wednesday`). `weekly` currently matches **every** day: Kairos does not track which day of the week a weekly item belongs to, so give weekday names instead. `monthly`, `quarterly` and `yearly` match **no** day, so such items are never planned (issue 10; the proposed fix is `docs/scheduling/recurrence_design.md`).
 
 ### Due dates
 

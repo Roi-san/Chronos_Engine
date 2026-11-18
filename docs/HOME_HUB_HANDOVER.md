@@ -31,6 +31,7 @@ The dashboard now opens on a **Home** page: what to do right now, today's plan, 
 - **Where the day ends** (`home-hub-fixes`, 2026-11-18). A bedtime after midnight (e.g. 02:00) used to empty the whole day. Now the plan runs to 23:59, or up to the bedtime when it is past midnight and the bedtime is still ahead. No sleep block plans to 23:59 instead of 16:00. "Go back to sleep" in the sleep prompt plans from wake-up instead of planning no flexible work. `docs/scheduling/sleep_after_midnight.md`.
 - **Gaps and breathing room** (`home-hub-fixes`, 2026-11-18). Urgent work takes the earliest gap it fits (helper windows used to need 30+ minutes, so urgent work went after a fixed slot while ordinary work took the gap before it). The `global_dynamic_buffer` in `buffer_settings.yml`, ignored by v2 until now, adds 5 minutes between items and around fixed blocks where there is room. "Light days" (pack or spread) is an open decision. `docs/scheduling/gaps_and_breathing_room.md`.
 - **Timer breaks** (`home-hub-fixes`, 2026-11-18). A day-template block with `subtype: break` and a fixed time is run by the timer (`start day`) as a break. Kairos v2 had dropped the subtype, so the break was treated as work to complete (a completion prompt and points). `tests/test_kairos_v2_timer_breaks.py`.
+- **Items without a length** (`home-hub-fixes`, 2026-11-18, decision D1). A task or habit without a length is planned for `default_duration_minutes` (30, `scheduling_settings.yml`) instead of never; a routine without its own length is one block for the total of its steps (it used to vanish together with its steps). Home tags such blocks **no length**; Brain Dump has a Length field. `docs/scheduling/item_lengths.md`.
 
 ### Bugs fixed elsewhere
 - `new` ignored the properties you gave it (a 30-minute task was saved with duration 0).
@@ -54,7 +55,7 @@ The dashboard now opens on a **Home** page: what to do right now, today's plan, 
 ### Testing
 Full suite (excluding `tests/test_kairos.py`, which tests the archived v1 scheduler), on `home-hub`: 205 passed, 2 failed. Both also fail on untouched `alpha_v0.3`, which has a third failure (`test_console_plugins`) that this branch fixes. 32 of the passing tests are new. A realistic fake life was also run through every view, widget and wizard in a headless browser.
 
-On `home-hub-fixes` at `b085852` (2026-11-18): **345 passed, 0 failed**. All three tests that fail on untouched `alpha_v0.3` are fixed: console plugins on `home-hub`, timer break-as-buffer and the TRICK debug-console registry on `home-hub-fixes`.
+On `home-hub-fixes` at `b085852` (2026-11-18): **345 passed, 0 failed**; with the item-length change (D1): **365 passed, 0 failed**. All three tests that fail on untouched `alpha_v0.3` are fixed: console plugins on `home-hub`, timer break-as-buffer and the TRICK debug-console registry on `home-hub-fixes`.
 
 ## What Kairos actually takes into account
 
@@ -75,16 +76,16 @@ Appointments are the remaining gap between "what my life contains" and "what Kai
 
 ## Shaky bits that need attention
 
-Issues found later, and the list of next tasks, are tracked in `docs/ISSUES_AND_NEXT_STEPS.md`.
+Issues found later, and the list of next tasks, are tracked in `docs/ISSUES_AND_NEXT_STEPS.md`; the order of work is in `docs/ROADMAP.md`. Since 2026-11-18 the items below also have tracker numbers (shown in brackets), and the tracker is where their status is kept.
 
 ### For the friend, highest impact first
-1. **The goal and commitment weights are a first calibration.** They were tuned against one fake life and the shipped settings (`docs/scheduling/direction_goals_commitments.md` has the numbers). They need a few real weeks of use, and they are two rows in `scheduling_priorities.yml` to adjust. Also: nothing fires when a commitment's period ends unmet; appointments still do not block time.
-2. **Tasks with no due date are never considered**, even if a window's tag filter matches them (`build_candidate_universe`). `task_defaults.yml` sets a due date of tomorrow, which hides this for tasks made with `new`.
-3. **Zero durations.** `generic_handle_new` writes `duration: 0`, and the Brain Dump wizard has no duration field, so its tasks can never be placed. Home warns and offers "Give them 30 min"; a default or a wizard field would fix it at the source.
-4. **A missed morning routine is re-queued into the afternoon** as one block. Needs a rule such as "do not re-queue after HH:MM".
-5. **Routines show as one block.** The Timer and Home say "Morning Routine", not the current step. Laying the steps out inside the routine's slot would fix both.
+1. **The goal and commitment weights are a first calibration.** They were tuned against one fake life and the shipped settings (`docs/scheduling/direction_goals_commitments.md` has the numbers). They need a few real weeks of use, and they are two rows in `scheduling_priorities.yml` to adjust. Also: nothing fires when a commitment's period ends unmet; appointments still do not block time (#17).
+2. **Tasks with no due date are never considered**, even if a window's tag filter matches them (`build_candidate_universe`). `task_defaults.yml` sets a due date of tomorrow, which hides this for tasks made with `new`. (#13)
+3. **Zero durations.** `generic_handle_new` writes `duration: 0`, and the Brain Dump wizard has no duration field, so its tasks can never be placed. Home warns and offers "Give them 30 min"; a default or a wizard field would fix it at the source. (#12, fixed 2026-11-18: both, `docs/scheduling/item_lengths.md`)
+4. **A missed morning routine is re-queued into the afternoon** as one block. Needs a rule such as "do not re-queue after HH:MM". (#14)
+5. **Routines show as one block.** The Timer and Home say "Morning Routine", not the current step. Laying the steps out inside the routine's slot would fix both. (#15)
 6. **Field-name decision.** The prototype makes Kairos accept what the builders write. The alternative is to make the builders write `start_time` / `end_time`. Both are reasonable; it should be one or the other.
-7. **Day template choice.** With several templates and no status requirements, the first by name wins.
+7. **Day template choice.** With several templates and no status requirements, the first by name wins. (#16)
 8. ~~**Three tests already fail upstream:** console plugins, timer break-as-buffer, and the TRICK debug-console registry.~~ All three fixed on these branches (see Testing). The timer one was hiding a real bug: authored break blocks were run as work.
 
 ### Not tested
