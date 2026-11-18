@@ -326,7 +326,12 @@ def dispatch_command(command_name, item_type, item_name, text_to_append, propert
     Dispatches a command to the appropriate item-specific module or a generic handler.
     """
     module_name_slug = str(item_type or '').strip().lower()
-    module_path = os.path.join(ROOT_DIR, "modules", module_name_slug, "main.py")
+    # Item modules are code, so look for them next to this file, not under
+    # ROOT_DIR: ROOT_DIR also locates data, and the test fixture points it at a
+    # temporary folder, where no modules exist. Every item command in the tests
+    # then fell back to the generic handlers, unnoticed. In a normal run both
+    # paths are the same folder (docs/WORKLOG.md, 2026-11-18, habit tests).
+    module_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), module_name_slug, "main.py")
     module = None
     if os.path.exists(module_path):
         spec = importlib.util.spec_from_file_location(f"chronos_module.{module_name_slug}", module_path)
