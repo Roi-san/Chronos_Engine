@@ -25,10 +25,10 @@ Items are the atoms of Chronos. They are stored as YAML files in the `user/` dir
   - `today legacy ...`: prints that the legacy scheduler is archived and stops. The old inline scheduler code further down `today.py` ("Mode C") is unreachable.
 - **Kairos Engine**: `modules/scheduler/kairos_v2.py`, class `KairosV2Scheduler`. `generate_schedule()` runs these phases in order:
   1. `gather_information`, `model_reality`: settings, current status, completion logs for the day, manual injections and adjustments.
-  2. `model_sleep`, `commit_sleep`: find the sleep anchor and the sleep boundary.
+  2. `model_sleep`, `commit_sleep`: sleep debt, and whether you are inside a sleep block right now (and what the sleep prompt answered).
   3. `ensure_week_context`, `select_week_template`, `derive_week_days`, `select_day_template`: pick the day template (eligible for the weekday, then `prioritize:` preferences, then closest status match, then name).
   4. `commit_anchor_skeleton`: place `reschedule: never` anchors from the template and hard injections.
-  5. `model_day_budget`: how much flexible time is left before sleep.
+  5. `model_day_budget`: where the plan ends (the next bedtime from the template's sleep anchors; 23:59 when that bedtime is after midnight or there is none; `docs/scheduling/sleep_after_midnight.md`) and how much flexible time is left before it.
   6. `build_candidate_universe`: template children plus library items that recur today, have a due date or deadline, or are pushed by a goal or commitment (`direction.py`).
   7. `remove_reality_impossible_candidates`: drop what was completed or skipped today; scale down to today's status (`_scale_down_for_status`: swap in lighter versions, keep within grace / urgent / important items, save the rest for a better day; see `docs/scheduling/status_scale_down_design.md`).
   8. `shape_week`, `populate_day_and_windows`, `narrow_window_candidate_pools`, `select_window_contents`: lay out fixed-time structure and fill windows by tag/category filter and score.

@@ -15,7 +15,7 @@ Keys are case-insensitive at the top level of an item file: `Name:` and `name:` 
 - `category` (string): Ranked in `user/settings/category_settings.yml`; used in scoring and in window filters.
 - `priority` (string): Ranked in `user/settings/priority_settings.yml`; used in scoring.
 - `duration` (number or string): Length in minutes. Accepted: `30`, `"30"`, `1h`, `1.5h`, `15m`, `90 min`, `1h30m`, `2h 15m`. An item with no usable duration cannot be placed.
-- `sleep` (bool): Canonical sleep marker. Kairos also treats an anchor as sleep when its category is `sleep`, it is tagged `sleep`, or its name contains "sleep" or "bedtime". Prefer `sleep: true`.
+- `sleep` (bool): Canonical sleep marker. Kairos also treats an anchor as sleep when its category is `sleep`, it is tagged `sleep`, or its name contains "sleep" or "bedtime". Prefer `sleep: true`. A sleep anchor in the day template sets where the plan ends; see [Bedtime: where the plan ends](#bedtime-where-the-plan-ends).
 
 ## How an item gets into a day (Kairos v2)
 
@@ -81,6 +81,20 @@ A template node with a start and an end (or a start and a duration) that is not 
 - `reschedule: never`: The only rule that makes something a hard anchor in Kairos v2. `reschedule: false` does not. Anchors are placed first and are never moved, trimmed or cut. Kairos v2 does not check authored anchors against each other, so keep them from overlapping; a hard injection that overlaps an anchor is rejected unless it is forced.
 
 Anchors come only from the chosen day template (at any depth under `children`) and from hard injections. A library item marked `reschedule: never` that is not in the day template is not scheduled at all. `anchor "<name>" scope:item` writes exactly this onto the item file, so only use it on items that are in your day template.
+
+### Bedtime: where the plan ends
+
+Verified 2026-11-18 (`model_day_budget`, `_resolve_next_bedtime`). Full rule, decisions and tests: `docs/scheduling/sleep_after_midnight.md`.
+
+Sleep anchors (a `reschedule: never` node that counts as sleep, see `sleep` above) are not placed as blocks. Their `start_time` is the bedtime, and flexible work is planned only up to the next bedtime:
+
+- A sleep anchor starting at **12:00 or later** is a bedtime today (`23:30` ends the plan at 23:30).
+- A sleep anchor starting **between 00:00 and 11:59** is a bedtime **after midnight**. It ends the day *before* it, so the plan runs to **23:59** and nothing is placed past the end of the calendar day. Only after midnight, while it is still ahead (00:30 with a `02:00` bedtime), does the plan run up to it.
+- With several sleep anchors, the soonest upcoming bedtime wins. Other sleep anchors (naps) are not kept free of work, and a nap at 14:00 ends the day at 14:00 (known issue 8 in `docs/ISSUES_AND_NEXT_STEPS.md`).
+- **No sleep anchor**: the plan runs to 23:59 (before 2026-11-18 it stopped at 16:00, 24 hours minus the target sleep).
+- After "go back to sleep" or "Shift today later" in the sleep prompt, the plan starts when the sleep block ends.
+
+`schedule.day_budget` records where the plan stops (`sleep_boundary_time`, `sleep_boundary_source`: `sleep_anchor`, `sleep_anchor_after_midnight` or `no_sleep_anchor`) and the real bedtime (`bedtime_time`, `bedtime_day`: `today` / `tomorrow`, `bedtime_anchor`).
 
 ### Windows
 

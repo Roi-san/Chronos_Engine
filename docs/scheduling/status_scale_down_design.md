@@ -232,6 +232,6 @@ Verification:
 
 Noticed, not caused by this change, not fixed (tracked in `docs/ISSUES_AND_NEXT_STEPS.md`):
 
-- **Sleep after midnight empties the day.** A sleep anchor at `00:30` is read as 00:30 *this* morning, so `remaining_minutes_before_sleep` is 0 and nothing is placed. Sleep at 23:55 works.
+- **Sleep after midnight empties the day.** A sleep anchor at `00:30` is read as 00:30 *this* morning, so `remaining_minutes_before_sleep` is 0 and nothing is placed. Sleep at 23:55 works. Fixed 2026-11-18: `docs/scheduling/sleep_after_midnight.md`.
 - **Work is placed after a fixed slot rather than before it.** At 22:05 with Gym fixed at 22:30, File taxes (20 min) goes to 23:15 after a re-plan, although 22:07 - 22:27 is free. Same with no status involved at all.
 - **`python modules/console.py today reschedule` segfaults on exit** when its output is redirected (exit 139). The schedule is written first. Same on the untouched previous commit; not seen from the dashboard.

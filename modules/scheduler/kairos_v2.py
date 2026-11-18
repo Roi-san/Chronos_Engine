@@ -79,6 +79,15 @@ STATUS_PRIORITY_IMPORTANCE = {
 # Commitment states that make an item urgent (direction.evaluate_commitment).
 STATUS_URGENT_COMMITMENT_STATES = {"last_chance", "behind"}
 
+# Where the plannable day ends (docs/scheduling/sleep_after_midnight.md).
+# A sleep block that starts before this minute (00:00-11:59) is a bedtime after
+# midnight: it belongs to the night after the day, not to this morning.
+SLEEP_AFTER_MIDNIGHT_BEFORE_MINUTE = 12 * 60
+# A plan never runs past the last minute of its calendar day. Chronos keys a day
+# by its calendar date (Home, completions, streaks), and every reader of a plan
+# takes 00:00 as the start of a day, so an end of 24:00 would be misread.
+PLAN_LAST_MINUTE_OF_DAY = 24 * 60 - 1
+
 
 @dataclass
 class KairosV2RunState:
@@ -266,7 +275,7 @@ class KairosV2Scheduler:
             "weekday_name": now.strftime("%A").lower(),
             "minutes_elapsed_since_start_of_day": minutes_elapsed,
             "remaining_day_mode": bool(self.user_context.get("start_from_now")) and state.target_date == now.date(),
-            "time_budget_rule": "24h_minus_sleep_time_minus_elapsed_time_since_start_of_day",
+            "time_budget_rule": "from_now_until_next_bedtime_or_end_of_calendar_day",
             "base_current_status": base_current_status,
             "current_status": current_status,
             "weighted_priorities": weighted_priorities,
@@ -2621,26 +2630,42 @@ class KairosV2Scheduler:
         Kairos treats time as a budget, not just as positions on a clock. After
         sleep and hard anchors are known, the engine can already describe how
         much open time realistically remains before the next sleep boundary.
+
+        Where the plan stops (`sleep_boundary_*`, docs/scheduling/sleep_after_midnight.md):
+        - at the next bedtime when it is still today (a 23:30 sleep block, or a
+          02:00 one while it is 00:30 and you have not gone to bed yet);
+        - at 23:59 when the next bedtime is after midnight (a 02:00 sleep block
+          at 22:00 ends the day *after* today's calendar date);
+        - at 23:59 when the day template has no sleep block at all.
+        The real bedtime is recorded separately in `bedtime_*`.
         """
         chosen = state.schedule.get("day_template")
         template = chosen.get("template") if isinstance(chosen, dict) else {}
-        sleep_anchor = self._find_primary_sleep_anchor(template or {}, state.target_date)
         anchor_skeleton = state.schedule.get("anchor_skeleton", {})
         anchors = anchor_skeleton.get("anchors", []) if isinstance(anchor_skeleton, dict) else []
         current_minutes = int(state.reality.get("minutes_elapsed_since_start_of_day") or 0)
-        target_sleep_minutes = int(state.sleep.get("target_sleep_minutes") or 0)
-
-        if sleep_anchor and sleep_anchor.get("start_minutes") is not None:
-            sleep_boundary_minutes = int(sleep_anchor["start_minutes"])
-            sleep_boundary_source = "sleep_anchor"
-        else:
-            sleep_boundary_minutes = max(0, (24 * 60) - target_sleep_minutes)
-            sleep_boundary_source = "target_sleep_minutes_fallback"
 
         if state.target_date == state.now.date():
             floor_minutes = max(current_minutes, self._sleep_policy_floor_minutes(state))
         else:
             floor_minutes = 0
+
+        bedtime = self._resolve_next_bedtime(
+            template or {},
+            state.target_date,
+            floor_minutes=floor_minutes,
+            is_today=state.target_date == state.now.date(),
+        )
+        if bedtime is None:
+            sleep_boundary_minutes = PLAN_LAST_MINUTE_OF_DAY
+            sleep_boundary_source = "no_sleep_anchor"
+        elif bedtime["day"] == "today":
+            sleep_boundary_minutes = int(bedtime["minutes"])
+            sleep_boundary_source = "sleep_anchor"
+        else:
+            sleep_boundary_minutes = PLAN_LAST_MINUTE_OF_DAY
+            sleep_boundary_source = "sleep_anchor_after_midnight"
+
         remaining_minutes_before_sleep = max(0, sleep_boundary_minutes - floor_minutes)
         remaining_anchor_minutes = 0
         for anchor in anchors:
@@ -2659,16 +2684,27 @@ class KairosV2Scheduler:
             remaining_anchor_minutes += effective_end - effective_start
 
         open_flexible_minutes = max(0, remaining_minutes_before_sleep - remaining_anchor_minutes)
+        bedtime_fields = {
+            # Minutes from the start of the target date; past 1440 when tomorrow.
+            "bedtime_minutes": bedtime["minutes"] if bedtime else None,
+            "bedtime_time": self._minutes_to_hm(bedtime["minutes"]) if bedtime else None,
+            "bedtime_day": bedtime["day"] if bedtime else None,
+            "bedtime_anchor": bedtime["name"] if bedtime else None,
+        }
         state.schedule["day_budget"] = {
             "sleep_boundary_minutes": sleep_boundary_minutes,
             "sleep_boundary_time": self._minutes_to_hm(sleep_boundary_minutes),
             "sleep_boundary_source": sleep_boundary_source,
+            **bedtime_fields,
             "remaining_minutes_before_sleep": remaining_minutes_before_sleep,
             "remaining_anchor_minutes_before_sleep": remaining_anchor_minutes,
             "open_flexible_minutes_before_sleep": open_flexible_minutes,
         }
         state.phase_notes["model_day_budget"] = {
             "sleep_boundary_time": self._minutes_to_hm(sleep_boundary_minutes),
+            "sleep_boundary_source": sleep_boundary_source,
+            "bedtime_time": bedtime_fields["bedtime_time"],
+            "bedtime_day": bedtime_fields["bedtime_day"],
             "remaining_minutes_before_sleep": remaining_minutes_before_sleep,
             "remaining_anchor_minutes_before_sleep": remaining_anchor_minutes,
             "open_flexible_minutes_before_sleep": open_flexible_minutes,
@@ -4237,7 +4273,18 @@ class KairosV2Scheduler:
         - authored fixed-time structural items
         """
         sleep_boundary = int(state.schedule.get("day_budget", {}).get("sleep_boundary_minutes") or 0)
-        floor = int(state.reality.get("minutes_elapsed_since_start_of_day") or 0) if state.target_date == state.now.date() else 0
+        # Same floor as model_day_budget: after "go back to sleep" / "shift today
+        # later" the day resumes when the sleep block ends, not at the clock time.
+        # (Gaps used to start at the clock time; everything placed there ended
+        # before the wake-up floor and was then dropped, leaving no flexible work.)
+        floor = (
+            max(
+                int(state.reality.get("minutes_elapsed_since_start_of_day") or 0),
+                self._sleep_policy_floor_minutes(state),
+            )
+            if state.target_date == state.now.date()
+            else 0
+        )
 
         surfaces = []
         for anchor in state.schedule.get("anchor_skeleton", {}).get("anchors", []):
@@ -6845,9 +6892,9 @@ class KairosV2Scheduler:
                     tokens.add(stripped)
         return tokens
 
-    def _find_primary_sleep_anchor(self, template: Dict[str, Any], anchor_date: date) -> Optional[Dict[str, Any]]:
+    def _find_sleep_anchors(self, template: Dict[str, Any], anchor_date: date) -> List[Dict[str, Any]]:
         """
-        Find the main sleep anchor for the chosen template.
+        Every sleep anchor in the chosen template, ordered by clock start.
         """
         sleep_anchors: List[Dict[str, Any]] = []
         for node in self._walk_nodes(template.get("children") or []):
@@ -6863,7 +6910,49 @@ class KairosV2Scheduler:
                 item.get("name", ""),
             )
         )
+        return sleep_anchors
+
+    def _find_primary_sleep_anchor(self, template: Dict[str, Any], anchor_date: date) -> Optional[Dict[str, Any]]:
+        """
+        Find the main sleep anchor for the chosen template (earliest clock start).
+        """
+        sleep_anchors = self._find_sleep_anchors(template, anchor_date)
         return sleep_anchors[0] if sleep_anchors else None
+
+    def _resolve_next_bedtime(
+        self,
+        template: Dict[str, Any],
+        anchor_date: date,
+        *,
+        floor_minutes: int,
+        is_today: bool,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        The next bedtime that ends this plan, or None when no sleep anchor has a start.
+
+        Each sleep anchor's start is placed on the timeline of the target date:
+        - from 12:00 on: tonight, today (unchanged behaviour; this includes the
+          case where the floor is already past it, which leaves no time);
+        - 00:00-11:59: a bedtime after midnight. It is still today only while
+          it is past midnight and the day has not reached it yet (00:30 with a
+          02:00 bedtime); otherwise it is tomorrow, `start + 1440`.
+        The soonest of these wins. With only evening sleep anchors that is the
+        earliest clock start, exactly what `_find_primary_sleep_anchor` picks.
+        """
+        best: Optional[Dict[str, Any]] = None
+        for anchor in self._find_sleep_anchors(template, anchor_date):
+            start = anchor.get("start_minutes")
+            if start is None:
+                continue
+            start = int(start)
+            if start >= SLEEP_AFTER_MIDNIGHT_BEFORE_MINUTE or (is_today and floor_minutes < start):
+                candidate = {"minutes": start, "day": "today"}
+            else:
+                candidate = {"minutes": start + 24 * 60, "day": "tomorrow"}
+            candidate["name"] = anchor.get("name")
+            if best is None or candidate["minutes"] < best["minutes"]:
+                best = candidate
+        return best
 
     def _parse_hm(self, value: Any) -> Optional[int]:
         """
@@ -7088,8 +7177,14 @@ class KairosV2Scheduler:
                 f"anchor_names={', '.join((notes.get('anchor_names') or [])[:3]) or 'none'}",
             ]
         if phase == "model_day_budget":
+            bedtime = (
+                f"{notes.get('bedtime_time')} {notes.get('bedtime_day')}"
+                if notes.get("bedtime_time")
+                else "unknown (no sleep block)"
+            )
             return [
-                f"sleep_boundary={notes.get('sleep_boundary_time')}",
+                f"sleep_boundary={notes.get('sleep_boundary_time')} ({notes.get('sleep_boundary_source')})",
+                f"bedtime={bedtime}",
                 f"open_flexible_minutes={notes.get('open_flexible_minutes_before_sleep', 0)}",
             ]
         if phase == "build_candidate_universe":

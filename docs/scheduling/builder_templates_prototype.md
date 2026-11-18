@@ -10,7 +10,7 @@ Five independent causes, each small:
 
 | # | Cause | Effect |
 | --- | --- | --- |
-| 1 | The builders save clock times as `ideal_start_time` / `ideal_end_time`. Kairos v2 reads only `start_time` / `start`. | Anchors, windows and timed blocks arrive with no time. With no timed sleep anchor the sleep boundary falls back to `24h - target sleep` = 16:00. |
+| 1 | The builders save clock times as `ideal_start_time` / `ideal_end_time`. Kairos v2 reads only `start_time` / `start`. | Anchors, windows and timed blocks arrive with no time. With no timed sleep anchor the sleep boundary falls back to `24h - target sleep` = 16:00 (since 2026-11-18 the plan runs to 23:59 instead; `docs/scheduling/sleep_after_midnight.md`). |
 | 2 | `_collect_structural_sequence` skips every fixed-time node, but `populate_day_and_windows` discovers fixed-time nodes only in `sequence`. The builders write to `children`. | A timed routine under `children` is skipped by one stage and never picked up by the other. |
 | 3 | `_coerce_minutes` accepts `45` and `1h` but not `15m`, `90 min` or `1h30m`. | Every item with a duration in the documented format has no length, so windows and gaps stay empty. |
 | 4 | Files created from `*_defaults.yml` have `Name:` / `Duration:`. `_iter_schedulable_library_items` reads raw keys and matches on `name`. | A routine made in the Routine Builder is never resolved, so its children are not expanded. Day templates fall back to the file stem as their name. |
