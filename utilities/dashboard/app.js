@@ -2101,7 +2101,7 @@ ready(async () => {
       const direct = document.querySelector(`[data-ui-id="${id.replace(/"/g, '\\"')}"]`);
       if (direct) return direct;
     } catch { }
-    const surface = ".".join(id.split(".").slice(0, 2));
+    const surface = id.split(".").slice(0, 2).join(".");
     if (surface && surface !== id) {
       const widget = _findWidgetByTrick({ surface });
       if (widget) return widget;

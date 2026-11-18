@@ -1,0 +1,38 @@
+type: widget
+name: debug_console
+label: Debug Console
+module: debug_console
+root: widget.debug_console
+elements:
+  - name: title
+    kind: text
+    actions: [get]
+  - name: minimize_button
+    kind: button
+    actions: [click]
+  - name: clear_button
+    kind: button
+    actions: [click]
+  - name: close_button
+    kind: button
+    actions: [click]
+  - name: filter_select
+    kind: select
+    actions: [get, set, type, paste]
+    value_type: string
+  - name: refresh_button
+    kind: button
+    actions: [click]
+  - name: open_editor_button
+    kind: button
+    actions: [click]
+  - name: copy_button
+    kind: button
+    actions: [click]
+  - name: output_text
+    kind: text
+    actions: [get, set, type, paste, wait, copy]
+    value_type: string
+  - name: status_text
+    kind: text
+    actions: [get, wait, copy]

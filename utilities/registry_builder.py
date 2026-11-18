@@ -1120,9 +1120,10 @@ def build_skills_registry():
         if not entry.is_dir() or entry.name.startswith((".", "_")):
             continue
         skill_id = str(entry.name).strip().lower()
-        if skill_id in {"templates", "template"}:
-            # Keep both if present, but preserve deterministic ordering below.
-            pass
+        if skill_id == "template":
+            # docs/agents/skills/template/ is the blank skeleton for writing a new
+            # skill, not a skill (see skills_index.md). "templates" is a real one.
+            continue
         skill_path = os.path.join(entry.path, "skill.md")
         if not os.path.isfile(skill_path):
             continue

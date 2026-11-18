@@ -25,8 +25,9 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Root debug files (exclude from repo)
-debug_*
+# Root debug files (exclude from repo). Anchored to the root: unanchored, this
+# also hid new files in utilities/dashboard/widgets/debug_console/ (its trick.yml).
+/debug_*
 
 # Local website and release artifacts (engine repo shouldn't include these)
 Website/
