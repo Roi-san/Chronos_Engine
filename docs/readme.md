@@ -86,7 +86,7 @@ Items and hierarchy
 Status-aware scheduling
 - Templates and items can include `status_requirements` (or legacy keys matching your custom status types). Chronos loads `user/settings/status_settings.yml` (legacy `Status_Settings.yml` still supported), scores every candidate day template, and automatically selects the one that best fits the pilot’s current status.
 - `today reschedule` rebuilds the day with those signals, boosts blocks whose tags match the current state, and automatically re-queues missed-but-important blocks (with a summary of what moved) instead of leaving them stuck in the past.
-- Conflicts are resolved; buffers and dependencies are respected. Trimming, cutting, marking, and `did` entries all update the plan.
+- Conflicts are resolved and buffers are respected (Kairos v2 has no dependency ordering: `depends_on` is not read). Trimming, cutting, marking, and `did` entries all update the plan.
 
 Scripts and conditions
 - `.chs` scripts can run CLI commands with variables, conditionals (`if/elseif/else/end`), and loops (`repeat/for/while`).

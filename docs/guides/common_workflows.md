@@ -107,6 +107,7 @@ Chores (habit convention)
   frequency: weekly
   tags: [chore, weekly]
   ```
+  - Note (2026-11-18): Kairos v2 currently treats `frequency: weekly` as every day, so this chore would be planned daily. Give it a weekday instead (`frequency: tuesday`). Tracked in `docs/ISSUES_AND_NEXT_STEPS.md`.
 
 ----------------------------------------
 
@@ -133,7 +134,7 @@ Plan the Day
 
 - Resolve conflicts & dependencies
   - Use exact item names and keep durations realistic.
-  - Add `depends_on: ["Warmup"]` in item YAML to hint order.
+  - Kairos v2 does not read `depends_on`. To keep an order, put the steps in a routine in that order, or give them fixed times.
 
 Tips for agents
 - When a user says “move coffee earlier,” translate to: `change "Have coffee" 07:45` then `today reschedule`.

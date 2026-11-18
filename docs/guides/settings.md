@@ -25,15 +25,15 @@ Each item type has a corresponding defaults file. These properties are applied w
   - Optional item fields like `deadline` are supported but not set by default.
 
 ### 2. Scoring & Priorities
-- **`scheduling_priorities.yml`**: Defines the weighted formula `Today.py` uses to score tasks.
-  - Controls how much `Due Date`, `Priority`, `Category`, and `Status Alignment` contribute to the importance score.
+- **`scheduling_priorities.yml`**: The weights Kairos v2 uses to rank work.
+  - One row each for `Category`, `Happiness`, `Due Date`, `Deadline`, `Priority Property`, `Goal Alignment` and `Commitment Pressure`. `Rank` is the weight, 0-10: 5 is neutral, 10 doubles the factor, 0 switches it off.
 - **`priority_settings.yml`**: Defines values for `high`, `medium`, `low` (e.g., High = 100 points).
 - **`category_settings.yml`**: Defines your life categories (Work, Health, Deep Work) and their base weight.
 
 ### 3. Status System (`user/settings/status_settings.yml`)
 Defines the dimensions of your human state (Energy, Focus, Mood). 
 - **Sub-files**: `<dimension>_settings.yml` (e.g., `energy_settings.yml`) define the valid levels (Low, Medium, High) and their impact on scheduling.
-- **Impact**: If `Energy` is `Low`, the scheduler penalizes high-energy tasks.
+- **Impact**: When today is worse than an item needs (its `status_requirements`), Kairos swaps in the item's lighter version, keeps it (one step short is forgiven, and urgent or important items stay), or saves it for a better day, which Home lists with an Add back button. Being better than needed never counts against an item. `Rank` orders the dimensions by importance; an optional `Grace` per row sets how many steps short are forgiven (default 1). Details: `docs/scheduling/status_scale_down_design.md`.
 
 ### 4. Interface & Themes
 - **`theme_settings.yml`**: Controls CLI colors and prompts.

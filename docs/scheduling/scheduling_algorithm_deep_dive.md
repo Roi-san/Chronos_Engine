@@ -1,5 +1,7 @@
 # Chronos Scheduling Algorithm Deep Dive (Kairos)
 
+> **Out of date (noted 2026-11-18).** This page follows the archived v1 scheduler (`kairos.py`), which now only raises an error. For the live Kairos v2 (`modules/scheduler/kairos_v2.py`) see `docs/dev/architecture.md` (section 3, phases), `docs/reference/item_properties.md` (what it reads) and the design docs in `docs/scheduling/`. Kairos v2 reads YAML directly (not `chronos_core.db`), has no dependency pass, writes `user/logs/kairos_v2_decision_log_latest.md`, and does not run `today kairos week`.
+
 Last verified: 2026-03-07  
 Code alignment target: `modules/scheduler/kairos.py` and `commands/today.py`
 

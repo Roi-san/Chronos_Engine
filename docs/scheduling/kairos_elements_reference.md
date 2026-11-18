@@ -1,7 +1,7 @@
 # Kairos Elements Reference
 
-Last verified: 2026-03-07  
-Scope: Active Kairos scheduling semantics
+Last verified: 2026-03-07; corrected for Kairos v2 on 2026-11-18 (marked "Kairos v2:")  
+Scope: Active Kairos scheduling semantics. What Kairos v2 reads, item by item: `docs/reference/item_properties.md`.
 
 ## Purpose
 
@@ -20,7 +20,7 @@ Key fields:
 
 Behavior:
 - Kairos fills windows with highest-ranked compatible candidates.
-- Window filters can restrict placement by type/category/tags/properties.
+- Window filters can restrict placement by type/category/tags/properties. Kairos v2: only the `tags` and `category` filter keys are honoured.
 
 ### TimeBlock
 Definition:
@@ -49,7 +49,7 @@ Definition:
 - A break segment (often scheduler-inserted) used for timer-style pacing.
 
 Behavior:
-- Can be inserted by Kairos when timer breaks are enabled.
+- Can be inserted by Kairos when timer breaks are enabled. Kairos v2: never inserted (`breaks:` is ignored); an authored `subtype: break` block keeps its time.
 - In timer schedule mode, break/buffer blocks are treated as non-completable break phases.
 
 ### Category Block (timeblock subtype)
@@ -57,7 +57,7 @@ Definition:
 - `subtype: category` segment with category bias.
 
 Behavior:
-- Prioritizes placement of matching-category work in that segment.
+- Prioritizes placement of matching-category work in that segment. Kairos v2: treated as an ordinary block; use a window with a `category` filter instead.
 
 ### Free Block (timeblock subtype)
 Definition:
@@ -72,14 +72,14 @@ Definition:
 
 Behavior:
 - Anchors are placed first.
-- Unresolved anchor overlap can invalidate schedule generation (`anchor_conflicts`).
+- Unresolved anchor overlap can invalidate schedule generation (`anchor_conflicts`). Kairos v2: authored anchors are not checked against each other; a hard injection that overlaps an anchor is rejected (`anchor_overlap`) unless forced.
 
 ### Candidate
 Definition:
 - An executable item considered for placement after gather/filter.
 
 Typical sources:
-- `task`, `habit`, `subroutine`, `microroutine` rows from `chronos_core.db`.
+- `task`, `habit`, `subroutine`, `microroutine` rows from `chronos_core.db`. Kairos v2: read from the YAML files under `user/` (template children, plus library items that recur today, have a due date or deadline, or are pushed by a goal or commitment).
 
 ### Injection
 Definition:
@@ -94,7 +94,7 @@ Definition:
 - Item property `auto_inject: true`.
 
 Behavior:
-- Candidate is packed into earliest feasible free segment.
+- Candidate is packed into earliest feasible free segment. Kairos v2: `auto_inject` is not read; use `today inject "<name>"` or `inject:next`.
 
 ### Quick Wins
 Definition:
@@ -106,7 +106,7 @@ Behavior:
 - Can draw from due/overdue/missed context depending runtime/settings.
 
 Typical controls:
-- Runtime option: `quickwins:N`
+- Runtime option: `quickwins:N` (Kairos v2: ignored)
 - Settings: `user/settings/quick_wins_settings.yml`
 
 Operational intent:
@@ -123,6 +123,7 @@ Behavior:
   - quick-wins placement
   - synthetic buffer insertion
   - synthetic break insertion (when timer breaks are enabled)
+- Kairos v2: urgent work opens a helper window in the earliest gap it fits, and breathing room from `buffer_settings.yml` is left between items and around fixed blocks where there is spare time; no synthetic buffer or break blocks (`docs/scheduling/gaps_and_breathing_room.md`).
 
 Why gaps may remain unfilled:
 - no candidate fits remaining duration
@@ -141,6 +142,7 @@ Definition:
 Behavior:
 - Enforced in dependency pass after overlap repair.
 - May trigger cascading shifts.
+- Kairos v2: not read; there is no dependency ordering.
 
 ### Completion Marker
 Definition:
@@ -153,18 +155,18 @@ Behavior:
 
 ### Scheduling rigidity
 - `reschedule: never` -> anchored behavior
-- `flexible: false` -> reduced mobility
-- `essential: true` -> protected from aggressive cuts
+- `flexible: false` -> reduced mobility (Kairos v2: not read)
+- `essential: true` -> protected from aggressive cuts (Kairos v2: not read; everything is protected unless `cut: allow` / `trim: allow`)
 
 ### Placement hints
 - `ideal_start_time`, `ideal_end_time`
 - `duration`
 - `category`, `priority`
-- `environment`
+- `environment` (Kairos v2: not read)
 
 ### Context matching
 - `status_requirements` map (preferred)
-- legacy status keys (still recognized)
+- legacy status keys (still recognized; Kairos v2: not read)
 
 ### Structural
 - `children` / `items` (template hierarchy)
@@ -172,6 +174,8 @@ Behavior:
 - `type: timeblock`
 
 ## Kairos Runtime Controls That Change Element Behavior
+
+Kairos v2 reads `template:`, `status:`, `timer_profile:` and the `repair-*` options; `prioritize:` (and `custom_property:`) only steer which day template is chosen. `buffers:`, `breaks:`, `sprints:`, `quickwins:N` and `ignore-trends` are parsed by `today` but ignored by Kairos v2 (checked 2026-11-18).
 
 - `template:<name|path>` -> template/window source
 - `status:key=value,...` -> status match + scoring effects

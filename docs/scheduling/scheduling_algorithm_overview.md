@@ -1,5 +1,7 @@
 # Chronos Scheduling Algorithm Overview (Kairos)
 
+> **Out of date (noted 2026-11-18).** This page describes the archived v1 scheduler (`kairos.py`, `weekly_generator.py`), which now only raises an error. The live scheduler is Kairos v2 (`modules/scheduler/kairos_v2.py`): its phases are in `docs/dev/architecture.md` (section 3), what it reads from items is in `docs/reference/item_properties.md`, and each recent change has a design doc in `docs/scheduling/`. Several things below do not exist in v2: the `chronos_core.db` candidate gather, dependency enforcement, `today kairos week`, and the `buffers:`, `breaks:`, `sprints:`, `quickwins:N` and `ignore-trends` options.
+
 Last verified: 2026-03-07  
 Primary code: `commands/today.py`, `modules/scheduler/kairos.py`, `modules/scheduler/weekly_generator.py`
 

@@ -1,6 +1,6 @@
 # Standard Item Properties
 
-Last verified: 2026-11-17 against `modules/scheduler/kairos_v2.py`, `modules/scheduler/direction.py`, `modules/scheduler/v1.py` (template helpers), `modules/scheduler/sleep_gate.py` and `modules/item_manager.py`.
+Last verified: 2026-11-17 (timeblock breaks and the timer: 2026-11-18) against `modules/scheduler/kairos_v2.py`, `modules/scheduler/runtime.py`, `modules/scheduler/direction.py`, `modules/scheduler/v1.py` (template helpers), `modules/scheduler/sleep_gate.py` and `modules/item_manager.py`.
 
 This is a practical reference of item properties that Chronos actively uses today, with the emphasis on what the active scheduler (**Kairos v2**) does with each one. Where a property is written by a builder or wizard but ignored by Kairos v2, it is listed under [Not read by Kairos v2](#not-read-by-kairos-v2).
 
@@ -119,7 +119,7 @@ Verified 2026-11-18. Full rule and decisions: `docs/scheduling/gaps_and_breathin
 ### Timeblocks
 
 - `type: timeblock`
-- `subtype`: Only `free` and `buffer` have scheduler meaning (the same words as tags work too). A `free` block is intentionally open time; a `buffer` block absorbs overflow. Other subtypes (`category`, `break`) are treated as ordinary blocks.
+- `subtype`: Only `free` and `buffer` have scheduler meaning (the same words as tags work too). A `free` block is intentionally open time; a `buffer` block absorbs overflow. Other subtypes (`category`, `break`) are treated as ordinary blocks. A `break` with a fixed time keeps its time, and the timer (`start day`) runs it as a break, like a buffer: no completion prompt, no points (since 2026-11-18; before, it was run as work).
 - `duration`: Total block time.
 
 ## Status

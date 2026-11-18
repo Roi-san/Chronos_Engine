@@ -47,6 +47,7 @@ Both start the local HTTP server (`utilities/dashboard/server.py`) and open the 
   - `Generate / Reschedule` now calls CLI bridge (`/api/cli`) and passes Kairos context properties.
   - Quick Toggles include: `buffers`, `timer breaks`, `sprints`, `ignore trends`, optional `timer_profile`, optional `template` override, optional `quickwins` max minutes.
   - Advanced Weights supports any custom property key (free text), passed as `custom_property:<name>` with slider weight via `prioritize:custom_property=<n>`.
+  - Kairos v2 (checked 2026-11-18): the `buffers`, `timer breaks`, `sprints`, `ignore trends` and `quickwins` toggles and the status threshold are passed along but not read, and the weight sliders (`prioritize:`, `custom_property:`) only steer which day template is chosen. The template override, `timer_profile` and the trim/cut repair controls work. Item weights live in `user/settings/scheduling_priorities.yml`.
   - Toggle state persists in localStorage (`chronos_sched_controls`).
 - **Item Manager** - Search/browse by type (defaults include every registered item type). YAML editor, copy/rename/delete, bulk delete/setprop/copy/export.
   - Item YAML editor uses syntax highlighting for YAML.

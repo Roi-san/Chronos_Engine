@@ -40,7 +40,6 @@ This index points to the main documentation entry points in this repo and what e
 - Macros (BEFORE/AFTER): `docs/dev/macros.md` - command hooks and macro config.
 - CHS Scripting: `docs/dev/chs_scripting.md` - scripting language reference.
 - Autosuggest: `docs/dev/autosuggest.md` - CLI and dashboard autosuggest/autocomplete design.
-- Documentation Audit (2026-03-06): `docs/dev/Documentation_Audit_2026-03-06.md` - freshness findings, resolved drift, and hardening plan.
 
 ## Reference
 - Features Index: `docs/features/features_index.md` - master map for domain, console, and dashboard feature indexes.

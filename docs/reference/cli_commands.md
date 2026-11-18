@@ -142,22 +142,19 @@ The central command for daily management.
 - `today`: Shows today's schedule (in-progress and upcoming). Uses Kairos active scheduler by default.
 - `today reschedule`: Rebuilds the schedule with conflict resolution. Uses Kairos active scheduler by default.
 - `today routines|subroutines|microroutines`: Collapses display to that level.
-- `today kairos [options]`: Run Kairos shadow schedule generation.
-- `today kairos week [days:N] [options]`: Generate rolling weekly skeleton.
-- `today legacy [subcommand/options]`: Force legacy scheduler path.
+- `today kairos [options]`: Run Kairos shadow schedule generation (writes `schedule_<date>_kairos_v2_shadow.yml`; the day is not replaced).
+- `today kairos week`: Disabled in Kairos v2; prints that weekly generation is deferred.
+- `today legacy`: Prints that the legacy scheduler is archived.
 
-**Kairos options (Chronos syntax):**
+**Kairos options (Chronos syntax), read by Kairos v2:**
 - `template:<name|path>`
 - `status:key=value,key=value` (example: `status:energy=high,focus=high`)
-- `prioritize:key=value,key=value` (example: `prioritize:happiness=9,deadline=5`)
-- `custom_property:<property_name>` (example: `custom_property:focus_depth`)
-- `buffers:true|false`
-- `breaks:timer|none`
-- `sprints:true|false`
+- `prioritize:key=value,key=value` (example: `prioritize:happiness=9`): steers which day template is chosen; it does not change item weights (those are in `user/settings/scheduling_priorities.yml`).
+- `custom_property:<property_name>`: also steers template choice only.
 - `timer_profile:<profile_name>`
-- `quickwins:N`
-- `ignore-trends` or `ignore-trends:true|false`
-- `days:N` (weekly mode)
+- `repair-trim:true|false`, `repair-cut:true|false`, `repair-min-duration:N`, `repair-cut-threshold:N`
+
+**Parsed but ignored by Kairos v2 (2026-11-18):** `buffers:`, `breaks:`, `sprints:`, `ignore-trends`, `quickwins:N`, `status-threshold:`, `days:N`. Quick wins run from `quick_wins_settings.yml`; breathing room comes from `buffer_settings.yml` (`docs/scheduling/gaps_and_breathing_room.md`).
 
 ### `tomorrow`
 Previews the schedule for tomorrow (or a specified offset).

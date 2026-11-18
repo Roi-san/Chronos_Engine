@@ -1,6 +1,7 @@
 # Home hub branch: what changed and what still needs attention
 
 Branch `home-hub`, built on `origin/alpha_v0.3` (`07a2bf1`). Committed in `f44cd71` and `7768099` and pushed to `origin/home-hub`; not merged into `alpha_v0.3`.
+Work continued on `home-hub-fixes` (built on `home-hub`, pushed to `origin/home-hub-fixes`). Its fixes, the open issues and the next tasks are tracked in `docs/ISSUES_AND_NEXT_STEPS.md`; the entries below marked `home-hub-fixes` come from there.
 Scheduler details are in `docs/scheduling/builder_templates_prototype.md` and `docs/scheduling/direction_goals_commitments.md`. The Home page is described in `docs/guides/home.md`.
 
 ## In one paragraph
@@ -29,6 +30,7 @@ The dashboard now opens on a **Home** page: what to do right now, today's plan, 
 - **Scale-down.** When today's status does not fit an item and a lighter version was authored (`mini_of`), Kairos schedules the lighter one, and it still counts toward the commitment.
 - **Where the day ends** (`home-hub-fixes`, 2026-11-18). A bedtime after midnight (e.g. 02:00) used to empty the whole day. Now the plan runs to 23:59, or up to the bedtime when it is past midnight and the bedtime is still ahead. No sleep block plans to 23:59 instead of 16:00. "Go back to sleep" in the sleep prompt plans from wake-up instead of planning no flexible work. `docs/scheduling/sleep_after_midnight.md`.
 - **Gaps and breathing room** (`home-hub-fixes`, 2026-11-18). Urgent work takes the earliest gap it fits (helper windows used to need 30+ minutes, so urgent work went after a fixed slot while ordinary work took the gap before it). The `global_dynamic_buffer` in `buffer_settings.yml`, ignored by v2 until now, adds 5 minutes between items and around fixed blocks where there is room. "Light days" (pack or spread) is an open decision. `docs/scheduling/gaps_and_breathing_room.md`.
+- **Timer breaks** (`home-hub-fixes`, 2026-11-18). A day-template block with `subtype: break` and a fixed time is run by the timer (`start day`) as a break. Kairos v2 had dropped the subtype, so the break was treated as work to complete (a completion prompt and points). `tests/test_kairos_v2_timer_breaks.py`.
 
 ### Bugs fixed elsewhere
 - `new` ignored the properties you gave it (a 30-minute task was saved with duration 0).
@@ -41,12 +43,18 @@ The dashboard now opens on a **Home** page: what to do right now, today's plan, 
 - Opening a widget by name from code did nothing (an undefined variable in `app.js`).
 - Cockpit could not load four of its panels (old folder names).
 - Canvas reported every save as failed.
+- (`home-hub-fixes`) `python modules/console.py today reschedule` crashed at exit (exit 139) after saving the schedule: the "done" chime played on a daemon thread that was still inside pygame when Python shut down.
+- (`home-hub-fixes`) The Debug Console's TRICK manifest never reached the repository: `.gitignore`'s `debug_*` matched the `widgets/debug_console/` folder. Now `/debug_*`, root files only, as its comment says.
+- (`home-hub-fixes`) TRICK highlight lookup threw a TypeError (`".".join(...)`, Python syntax, in `app.js`).
+- (`home-hub-fixes`) `skills list` showed the blank skill template as a skill named "<Skill Name>".
 
 ### Settings on this machine only
 `user/settings/alpha_gate_settings.yml` turns the alpha gate off, so goals, commitments, projects, rewards and achievements are usable. `alphagate reset` in the console turns it back on.
 
 ### Testing
-Full suite (excluding `tests/test_kairos.py`, which tests the archived v1 scheduler): 205 passed, 2 failed. Both also fail on untouched `alpha_v0.3`, which has a third failure (`test_console_plugins`) that this branch fixes. 32 of the passing tests are new. A realistic fake life was also run through every view, widget and wizard in a headless browser.
+Full suite (excluding `tests/test_kairos.py`, which tests the archived v1 scheduler), on `home-hub`: 205 passed, 2 failed. Both also fail on untouched `alpha_v0.3`, which has a third failure (`test_console_plugins`) that this branch fixes. 32 of the passing tests are new. A realistic fake life was also run through every view, widget and wizard in a headless browser.
+
+On `home-hub-fixes` at `b085852` (2026-11-18): **345 passed, 0 failed**. All three tests that fail on untouched `alpha_v0.3` are fixed: console plugins on `home-hub`, timer break-as-buffer and the TRICK debug-console registry on `home-hub-fixes`.
 
 ## What Kairos actually takes into account
 
@@ -77,7 +85,7 @@ Issues found later, and the list of next tasks, are tracked in `docs/ISSUES_AND_
 5. **Routines show as one block.** The Timer and Home say "Morning Routine", not the current step. Laying the steps out inside the routine's slot would fix both.
 6. **Field-name decision.** The prototype makes Kairos accept what the builders write. The alternative is to make the builders write `start_time` / `end_time`. Both are reasonable; it should be one or the other.
 7. **Day template choice.** With several templates and no status requirements, the first by name wins.
-8. **Three tests already fail upstream:** console plugins, timer break-as-buffer, and the TRICK debug-console registry.
+8. ~~**Three tests already fail upstream:** console plugins, timer break-as-buffer, and the TRICK debug-console registry.~~ All three fixed on these branches (see Testing). The timer one was hiding a real bug: authored break blocks were run as work.
 
 ### Not tested
 - Nia chat (it sends personal data to an external AI service).
@@ -86,7 +94,7 @@ Issues found later, and the list of next tasks, are tracked in `docs/ISSUES_AND_
 - Week templates and multi-day planning (`tomorrow`, `this`, `next`).
 
 ### Small things noticed
-- The "Yesterday Check-in" popup appears on startup even when nothing was scheduled yesterday.
+- The "Yesterday Check-in" popup appears on startup even when nothing was scheduled yesterday. (Checked 2026-11-18: by design it shows whenever there is anything to log, once a day until dismissed; see issue 7 in `docs/ISSUES_AND_NEXT_STEPS.md`.)
 - `/api/profile/avatar` and `happiness_value_name_assoc.yml` return 404 on a fresh install (harmless).
 - `prompt_toolkit`, `pystray`, `pywebview` and `playsound` are in `requirements.txt` but not installed on this PC; `install_dependencies.bat` adds them.
 

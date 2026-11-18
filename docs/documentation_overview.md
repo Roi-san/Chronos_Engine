@@ -4,7 +4,7 @@
 
 **Chronos Engine** is a comprehensive, YAML-first life management system with a modular architecture built for humans and AI agents. It combines a powerful CLI, a local dashboard, background services (Listener & Timer), and sophisticated scheduling algorithms to help users live intentionally through status-aware, template-driven daily planning.
 
-**Current Status**: Alpha v0.2 (active through 2026-03 changelog updates)
+**Current Status**: Alpha v0.3 (this summary was written for v0.2; sections 1 and 2 below predate the Kairos v2 scheduler)
 
 ---
 
@@ -49,6 +49,8 @@ Chronos rejects the traditional "balance" approach that dilutes every day. Inste
 ---
 
 ## 🎯 Core Features
+
+> **Sections 1 and 2 describe the scheduler before Kairos v2** (noted 2026-11-18). How the live scheduler plans a day: `docs/dev/architecture.md` (section 3). How status changes the plan now (lighter versions, one step of grace, "saved for a better day"): `docs/scheduling/status_scale_down_design.md`. The weights that rank work: `user/settings/scheduling_priorities.yml` (`docs/guides/settings.md`).
 
 ### 1. Status-Aware Scheduling
 
