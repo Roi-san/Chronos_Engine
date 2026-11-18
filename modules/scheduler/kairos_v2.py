@@ -6146,22 +6146,26 @@ class KairosV2Scheduler:
             end_minutes = item.get("end_minutes")
             if start_minutes is None or end_minutes is None:
                 continue
-            blocks.append(
-                {
-                    "kind": "fixed_time",
-                    "name": item.get("name"),
-                    "identity": item.get("identity"),
-                    "type": item.get("type"),
-                    "start_time": item.get("start_time"),
-                    "end_time": item.get("end_time"),
-                    "start_minutes": int(start_minutes),
-                    "end_minutes": int(end_minutes),
-                    "duration_minutes": item.get("duration_minutes"),
-                    "children": [],
-                    "top_level_parent_name": item.get("top_level_parent_name"),
-                    "top_level_parent_type": item.get("top_level_parent_type"),
-                }
-            )
+            fixed_block = {
+                "kind": "fixed_time",
+                "name": item.get("name"),
+                "identity": item.get("identity"),
+                "type": item.get("type"),
+                "start_time": item.get("start_time"),
+                "end_time": item.get("end_time"),
+                "start_minutes": int(start_minutes),
+                "end_minutes": int(end_minutes),
+                "duration_minutes": item.get("duration_minutes"),
+                "children": [],
+                "top_level_parent_name": item.get("top_level_parent_name"),
+                "top_level_parent_type": item.get("top_level_parent_type"),
+            }
+            # Keep an authored timeblock subtype (`subtype: break`) so the timer
+            # runs a break as a break, not as work to complete.
+            subtype = str(item.get("subtype") or item.get("timeblock_subtype") or "").strip().lower()
+            if subtype:
+                fixed_block["subtype"] = subtype
+            blocks.append(fixed_block)
 
         for window in active_windows:
             if window.get("start_minutes") is None:
@@ -6571,21 +6575,22 @@ class KairosV2Scheduler:
                     )
                 continue
 
-            execution_units.append(
-                {
-                    "kind": block.get("kind"),
-                    "parent_kind": None,
-                    "parent_name": None,
-                    "name": block.get("name"),
-                    "identity": block.get("identity"),
-                    "type": block.get("type") or ("timeblock" if block.get("kind") == "anchor" else block.get("kind")),
-                    "start_time": block.get("start_time"),
-                    "end_time": block.get("end_time"),
-                    "start_minutes": block.get("start_minutes"),
-                    "end_minutes": block.get("end_minutes"),
-                    "duration_minutes": block.get("duration_minutes"),
-                }
-            )
+            unit = {
+                "kind": block.get("kind"),
+                "parent_kind": None,
+                "parent_name": None,
+                "name": block.get("name"),
+                "identity": block.get("identity"),
+                "type": block.get("type") or ("timeblock" if block.get("kind") == "anchor" else block.get("kind")),
+                "start_time": block.get("start_time"),
+                "end_time": block.get("end_time"),
+                "start_minutes": block.get("start_minutes"),
+                "end_minutes": block.get("end_minutes"),
+                "duration_minutes": block.get("duration_minutes"),
+            }
+            if block.get("subtype"):
+                unit["subtype"] = block.get("subtype")
+            execution_units.append(unit)
 
         execution_units.sort(
             key=lambda unit: (

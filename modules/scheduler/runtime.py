@@ -228,7 +228,11 @@ def _normalize_execution_unit(unit: Dict[str, Any]) -> Dict[str, Any]:
     end_label = _normalize_time_label(unit.get("end_time"))
     duration = _coerce_minutes(unit.get("duration_minutes")) or _duration_from_range(start_label, end_label)
     anchored = kind == "anchor" or parent_kind == "anchor"
-    is_buffer = _is_buffer_like(kind, item_type)
+    # An authored `subtype: break` (or buffer) on a fixed-time block is a break
+    # for the timer, not work to complete.
+    subtype = str(unit.get("subtype") or "").strip().lower()
+    is_break = item_type == "break" or kind == "break" or subtype == "break"
+    is_buffer = _is_buffer_like(kind, item_type) or subtype in {"buffer", "break"}
     normalized_type = item_type or ("buffer" if is_buffer else kind or "task")
     return {
         "name": str(unit.get("name") or "Unnamed block"),
@@ -244,12 +248,12 @@ def _normalize_execution_unit(unit: Dict[str, Any]) -> Dict[str, Any]:
         "minutes": duration,
         "duration": duration,
         "is_buffer": is_buffer,
-        "is_break": item_type == "break" or kind == "break",
+        "is_break": is_break,
         "anchored": anchored,
         "reschedule": "never" if anchored else "auto",
         "window_name": parent_kind.upper() if parent_kind else None,
         "window": kind == "window" or parent_kind == "window",
-        "buffer_type": "break" if (item_type == "break" or kind == "break") else ("buffer" if is_buffer else None),
+        "buffer_type": "break" if is_break else ("buffer" if is_buffer else None),
         "schedule_type": normalized_type,
         "subtype": "anchor" if anchored else (kind or None),
         "timeblock_subtype": "anchor" if anchored and normalized_type == "timeblock" else (kind if normalized_type == "timeblock" else None),
