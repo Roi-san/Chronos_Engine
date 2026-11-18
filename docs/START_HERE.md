@@ -127,5 +127,5 @@ Scoring: `_urgency_bonus` adds due date, deadline, goal and commitment points; w
 
 ## Where things stand
 
-- 2026-11-18: on `home-hub-fixes`, latest commit pushed. Full suite **365 passed, 0 failed**.
-- Roadmap phase 1, "nothing silently missing": 1a item lengths done (D1). Next: 1b tests for habits, then 1c recurring items (D2, `docs/scheduling/recurrence_design.md`).
+- 2026-11-18: on `home-hub-fixes`, latest commit pushed. Full suite: **380 tests, 378 pass**; the 2 in `tests/test_timer_anchor_wait.py` fail only between 22:30 and midnight (issue 21, a test bug). Any other failure is new.
+- Roadmap phase 1, "nothing silently missing": 1a item lengths done (D1), 1b habit tests done. Next: 1c recurring items (D2), built exactly as written in `docs/scheduling/recurrence_design.md` (the pilot gave the go on 2026-11-18); not started.

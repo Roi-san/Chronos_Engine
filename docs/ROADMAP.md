@@ -81,7 +81,7 @@ Starting #10 now does not get in the way of the switches above. It touches recur
 | Phase | Step | Tracker | Size | Needs |
 | --- | --- | --- | --- | --- |
 | 1. Nothing silently missing | 1a. A default length for items without one. **Done 2026-11-18** (`docs/scheduling/item_lengths.md`) | #12 | M | D1 |
-| | 1b. Tests for habits (a safety net before touching recurrence) | next task 3 | S-M | - |
+| | 1b. Tests for habits (a safety net before touching recurrence). **Done 2026-11-18** (`65355e2`) | next task 3 | S-M | - |
 | | 1c. One shared day/period helper; weekly, monthly, quarterly, yearly done properly; commitments moved onto the helper | #10 | M | **D2** |
 | 2. Find the unknown breakpoints | 2. Fresh-install walkthrough as a new friend, in a throwaway copy with a headless browser: onboarding, Life Setup, Chore Setup, Brain Dump, Goal Planning, plan, Start day, the next day's check-in. Every problem gets a tracker number, then is placed in phase 3 or 4. | new | M | - |
 | 3. The day looks right | 3a. Missed fixed-time items (a morning routine showing up in the afternoon) | #14 | S | D4 |

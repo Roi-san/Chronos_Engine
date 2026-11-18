@@ -119,3 +119,16 @@ Every change made on the `home-hub` and `home-hub-fixes` branches, oldest first:
 ## 2026-11-18 22:27 · `4453c88` · D1 documented; roadmap; D2 proposal
 
 - **Changed.** `docs/ROADMAP.md`, `docs/scheduling/item_lengths.md`, `docs/scheduling/recurrence_design.md` (proposal for issue 10), tracker, handover, item properties, architecture, Home guide, Brain Dump page.
+
+## 2026-11-18 ~22:45 · `0454ff7` · START_HERE, this work log, regression scripts in the repo
+
+- **Changed.** `docs/START_HERE.md` (orientation for a new session), `docs/WORKLOG.md` (this file), `scripts/regression/` (the fake-life dumps, probes and browser check that only lived in temporary folders), links at the top of `docs/index.md`.
+
+## 2026-11-18 ~22:50 · `65355e2` · Step 1b: habit tests; item modules found next to item_manager
+
+- **Why.** The habit module once went months without loading and nothing noticed; recurring items (D2) will depend on habit completion history.
+- **Changed.** `tests/test_habits.py` (15 tests): the habit module loads and is reached by dispatch; new, complete (completion_dates, last_completed, streaks, bad-habit incidents), track, delete; `complete habit` writes today's completion log and Kairos then drops the habit (`already_completed_today`).
+- **Found and fixed.** The test fixture points `item_manager.ROOT_DIR` at a temporary folder, and `dispatch_command` looked for `modules/<type>/main.py` under `ROOT_DIR`, so in every test all item commands silently used the generic handlers. The lookup is now relative to `item_manager.py` (same folder in a normal run).
+- **Found, logged.** Issue 20 (tests that write items also write the core mirror `chronos_core.db` of the checkout they run in). Issue 21 (`tests/test_timer_anchor_wait.py` fails between 22:30 and midnight: "90 minutes from now" wraps past midnight). Issue 4 confirmed for habits: the module refuses a second completion today, but `complete` still runs the completion effects (points).
+- **Checked.** Full suite 378 passed; the 2 failures are issue 21 and fail the same way on the unchanged code.
+- **Next.** Step 1c, recurring items (D2), as written in `docs/scheduling/recurrence_design.md`; not started.
