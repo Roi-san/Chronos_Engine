@@ -217,6 +217,11 @@ def play(sound_name, wait=False, max_wait_seconds=2.0):
         return False
     if wait:
         return _play_sync(path, wait=True, max_wait_seconds=max_wait_seconds)
-    threading.Thread(target=_play_sync, args=(path, False, max_wait_seconds), daemon=True).start()
+    # Not a daemon thread: Python waits for it before it runs exit handlers. As a
+    # daemon, a one-shot command (`python modules/console.py today reschedule`)
+    # could exit while pygame was still inside `snd.play()`, and the process
+    # crashed with an access violation (exit 139). The thread only starts
+    # playback and returns, so this adds no noticeable delay.
+    threading.Thread(target=_play_sync, args=(path, False, max_wait_seconds), daemon=False).start()
     return True
 
