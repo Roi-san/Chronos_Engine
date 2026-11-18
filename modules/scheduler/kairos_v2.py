@@ -46,7 +46,7 @@ import re
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -99,6 +99,14 @@ RUNTIME_HELPER_DEFAULT_MIN_GAP_MINUTES = 1
 # archived v1 scheduler used.
 BREATHING_ROOM_DEFAULT_MINUTES = 5
 BREATHING_ROOM_DEFAULT_INTERVAL_MINUTES = 45
+# Items without a length (decision D1, docs/scheduling/item_lengths.md). Kairos
+# cannot place a 0-minute item, so a task or habit with no usable length gets the
+# default (`default_duration_minutes` in scheduling_settings.yml), and a routine
+# without a length of its own is planned for the total of its steps (or the
+# default when none of its steps has a length). Anything else is left alone.
+DEFAULT_ITEM_MINUTES = 30
+LENGTH_LEAF_TYPES = frozenset({"task", "habit"})
+LENGTH_CONTAINER_TYPES = frozenset({"routine", "subroutine", "microroutine"})
 
 
 @dataclass
@@ -1031,12 +1039,29 @@ class KairosV2Scheduler:
             "candidates": candidates,
             "manual_adjustment_events": manual_adjustment_events,
         }
+        # Lengths Kairos had to assume (D1): Home says so on the block, and the
+        # pilot can set the real length. Items with their own length are not listed.
+        state.schedule["assumed_lengths"] = [
+            {
+                "identity": candidate.get("identity"),
+                "name": candidate.get("name"),
+                "type": candidate.get("type"),
+                "minutes": candidate.get("duration"),
+                "source": candidate.get("duration_source"),
+            }
+            for candidate in candidates
+            if candidate.get("duration_source") in ("steps", "default")
+        ]
         state.phase_notes["build_candidate_universe"] = {
             "candidate_count": len(candidates),
             "candidate_names": [candidate.get("name") for candidate in candidates],
             "manual_soft_injection_count": manual_soft_injections_applied,
             "manual_adjustment_event_count": len(manual_adjustment_events),
             "finished_one_offs_skipped": finished_one_offs_skipped,
+            "assumed_lengths": [
+                f"{row['name']}: {row['minutes']} min ({row['source']})"
+                for row in state.schedule["assumed_lengths"]
+            ],
         }
         self._record_commit(
             state,
@@ -1609,6 +1634,11 @@ class KairosV2Scheduler:
         # Expansion merges in routine/subroutine content authored elsewhere (e.g. the
         # Routine Builder), so normalize builder-style time fields once more here.
         normalize_template_times(expanded_nodes)
+        # Items without a length (D1) get the same length here as their candidates,
+        # before fixed-time slots are found: "Gym at 18:00" with no length keeps its
+        # slot instead of vanishing.
+        for node in expanded_nodes:
+            self._fill_structure_length(node)
         # Timed blocks are authored under `children` (Day Builder) as well as under
         # `sequence`. `_collect_structural_sequence` already skips every fixed-time
         # node, so they must all be discovered here or they vanish from the day.
@@ -4119,6 +4149,12 @@ class KairosV2Scheduler:
         source_path = str(node.get("_source_path") or "").strip() or None
         resolved_source_path = str(node.get("_resolved_source_path") or "").strip() or None
         identity = f"{candidate_type}:{name.lower()}"
+        # Every candidate passes through here, so this is the one place an item
+        # without a length gets one (D1). An item's own length is never changed.
+        length_minutes, length_source = self._effective_length(node)
+        duration = node.get("duration")
+        if length_source in ("steps", "default"):
+            duration = length_minutes
         return {
             "identity": identity,
             "name": name,
@@ -4128,7 +4164,8 @@ class KairosV2Scheduler:
             "frequency": node.get("frequency"),
             "due_date": node.get("due_date"),
             "deadline": node.get("deadline"),
-            "duration": node.get("duration"),
+            "duration": duration,
+            "duration_source": length_source,
             "tags": [str(tag or "").strip().lower() for tag in (node.get("tags") or [])],
             "priority": node.get("priority"),
             "trim": node.get("trim"),
@@ -4143,6 +4180,86 @@ class KairosV2Scheduler:
             "source_path": source_path,
             "resolved_source_path": resolved_source_path,
         }
+
+    def _default_item_minutes(self) -> int:
+        """
+        The length an item without one is planned for (D1): `default_duration_minutes`
+        in scheduling_settings.yml, else DEFAULT_ITEM_MINUTES. Read once per run.
+        """
+        cached = getattr(self, "_default_item_minutes_cache", None)
+        if cached is None:
+            settings = self._load_yaml("settings", "scheduling_settings.yml") or {}
+            value = self._coerce_minutes(settings.get("default_duration_minutes")) if isinstance(settings, dict) else None
+            cached = value if value and value > 0 else DEFAULT_ITEM_MINUTES
+            self._default_item_minutes_cache = cached
+        return cached
+
+    def _known_length(self, node: Dict[str, Any]) -> int:
+        """Minutes a node is known to take: its own length, else the total of its steps'."""
+        if not isinstance(node, dict):
+            return 0
+        own = self._coerce_minutes(node.get("duration")) or 0
+        if own > 0:
+            return own
+        children = node.get("children") or []
+        if not isinstance(children, list):
+            return 0
+        return sum(self._known_length(child) for child in children if isinstance(child, dict))
+
+    def _effective_length(self, node: Dict[str, Any]) -> Tuple[Optional[int], Optional[str]]:
+        """
+        How long Kairos plans an item for (decision D1, docs/scheduling/item_lengths.md).
+
+        Returns (minutes, source):
+        - "own": the item's own length, or the span of its start and end times;
+        - "steps": a routine / subroutine / microroutine without a length of its
+          own, planned for the total of its steps' known lengths (steps are read
+          from their own files when the routine only names them);
+        - "default": a task or habit without a length, or a routine none of whose
+          steps has one (`_default_item_minutes`).
+        (None, None) for everything else (sleep blocks, windows, timeblocks, ...),
+        which this rule leaves alone.
+        """
+        if not isinstance(node, dict):
+            return None, None
+        own = self._coerce_minutes(node.get("duration")) or 0
+        if own > 0:
+            return own, "own"
+        start = self._parse_hm(node.get("start_time"))
+        end = self._parse_hm(node.get("end_time"))
+        if start is not None and end is not None and end > start:
+            return end - start, "own"
+        if self._is_sleep_like_node(node):
+            return None, None
+        node_type = str(node.get("type") or "").strip().lower()
+        if node_type in LENGTH_CONTAINER_TYPES:
+            expanded = self._expand_structured_node({}, node)
+            steps = sum(
+                self._known_length(child)
+                for child in (expanded.get("children") or [])
+                if isinstance(child, dict)
+            )
+            if steps > 0:
+                return steps, "steps"
+            return self._default_item_minutes(), "default"
+        if node_type in LENGTH_LEAF_TYPES:
+            return self._default_item_minutes(), "default"
+        return None, None
+
+    def _fill_structure_length(self, node: Dict[str, Any]) -> None:
+        """
+        Give a top-level node of the day's structure the length its candidate gets
+        (D1), so a routine or habit with a start time but no length keeps its slot,
+        and the structure and the candidates agree on every length.
+        """
+        if not isinstance(node, dict) or self._is_hard_anchor(node):
+            return
+        if (self._coerce_minutes(node.get("duration")) or 0) > 0:
+            return
+        minutes, source = self._effective_length(node)
+        if source in ("steps", "default") and minutes:
+            node["duration"] = minutes
+            node["duration_source"] = source
 
     def _is_inactive_status(self, node: Dict[str, Any]) -> bool:
         """

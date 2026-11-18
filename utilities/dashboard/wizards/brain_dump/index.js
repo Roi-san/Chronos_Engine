@@ -10,7 +10,7 @@ let optionsRef = null;
 const STEP_DEFS = [
   { id: 'capture', name: 'Capture', hint: 'Dump tasks as simple lines.', render: renderCaptureStep },
   { id: 'sort', name: 'Sort', hint: 'Bucket by horizon.', render: renderSortStep },
-  { id: 'refine', name: 'Refine', hint: 'Priority, due dates, tags.', render: renderRefineStep },
+  { id: 'refine', name: 'Refine', hint: 'Priority, due dates, lengths, tags.', render: renderRefineStep },
 ];
 
 const BUCKETS = [
@@ -148,7 +148,7 @@ function injectStyles(){
     .form-grid.two { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
     label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--chronos-text); }
     label span.hint { font-size: 12px; color: var(--chronos-text-soft); }
-    input[type="text"], input[type="date"], textarea, select {
+    input[type="text"], input[type="date"], input[type="number"], textarea, select {
       border-radius: 10px;
       border: 1px solid rgba(255,255,255,0.08);
       background: rgba(8,12,20,0.85);
@@ -306,6 +306,7 @@ function createTask(name){
     horizon: 'month',
     priority: '',
     due_date: '',
+    duration: '',
     tags: '',
   };
 }
@@ -436,6 +437,7 @@ function renderRefineStep(container, state){
           ${priorities.map(opt => `<option value="${escapeAttr(opt.value)}"${opt.value === task.priority ? ' selected' : ''}>${escapeHtml(opt.label)}</option>`).join('')}
         </select></label>
         <label>Due date<input type="date" data-field="due_date" value="${escapeAttr(task.due_date)}" /></label>
+        <label>Length<span class="hint">Minutes. Leave empty and Chronos plans your default length.</span><input type="number" min="1" step="5" data-field="duration" value="${escapeAttr(task.duration)}" placeholder="30" /></label>
         <label>Tags<span class="hint">Comma separated.</span><input type="text" data-field="tags" value="${escapeAttr(task.tags)}" placeholder="client, roadmap" /></label>
       </div>
     `;
@@ -573,6 +575,8 @@ async function saveTasks(){
       };
       if (task.priority?.trim()) payload.priority = task.priority.trim();
       if (task.due_date) payload.due_date = task.due_date;
+      const minutes = parseInt(task.duration, 10);
+      if (Number.isFinite(minutes) && minutes > 0) payload.duration = minutes;
       const tags = parseTags(task.tags);
       if (tags.length) payload.tags = tags;
       try {

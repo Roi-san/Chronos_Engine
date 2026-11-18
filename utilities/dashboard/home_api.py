@@ -160,6 +160,53 @@ def status_effects(record):
     return out
 
 
+# -- lengths Kairos assumed --------------------------------------------------------
+# Kairos records `schedule.assumed_lengths` (decision D1,
+# docs/scheduling/item_lengths.md): items planned with the default length because
+# they have none, and routines planned for the total of their steps.
+
+def length_notes(record):
+    """
+    Plain-language view of `schedule.assumed_lengths` for Home.
+
+    Returns:
+      notes: {lowercase name: sentence} for every block whose length was assumed.
+      unset: lowercase names planned with the default length (Home tags them).
+    Missing or malformed input gives empty results, never an error.
+    """
+    out = {"notes": {}, "unset": []}
+    if not isinstance(record, list):
+        return out
+    for row in record:
+        if not isinstance(row, dict) or not str(row.get("name") or "").strip():
+            continue
+        key = str(row["name"]).strip().lower()
+        try:
+            minutes = int(row.get("minutes") or 0)
+        except (TypeError, ValueError):
+            minutes = 0
+        if minutes <= 0:
+            continue
+        source = str(row.get("source") or "")
+        if source == "default":
+            out["notes"][key] = f"No length set, so Chronos planned {minutes} min. Set its real length in Manage."
+            if key not in out["unset"]:
+                out["unset"].append(key)
+        elif source == "steps":
+            out["notes"][key] = f"Planned for {minutes} min, the total of its steps."
+    return out
+
+
+def _default_item_minutes():
+    """The length Kairos gives an item without one (scheduling_settings.yml), as Home shows it."""
+    data = _read_yaml(_settings_file("scheduling_settings.yml") or "") or {}
+    try:
+        value = int(data.get("default_duration_minutes") or 0) if isinstance(data, dict) else 0
+    except (TypeError, ValueError):
+        value = 0
+    return value if value > 0 else 30
+
+
 def _profile():
     data = _read_yaml(os.path.join(USER_DIR, "profile", "profile.yml")) or {}
     return {"nickname": str(data.get("nickname") or "").strip()}
@@ -214,7 +261,10 @@ def _status():
 def _today():
     """Today's generated schedule, flattened, with what has been done so far."""
     date_str = datetime.now().strftime("%Y-%m-%d")
-    out = {"date": date_str, "exists": False, "blocks": [], "completions": {}, "status_effects": status_effects(None)}
+    out = {
+        "date": date_str, "exists": False, "blocks": [], "completions": {},
+        "status_effects": status_effects(None), "length_notes": length_notes(None),
+    }
     closed_entries = []
 
     comp = _read_yaml(os.path.join(USER_DIR, "schedules", "completions", f"{date_str}.yml")) or {}
@@ -260,6 +310,10 @@ def _today():
         out["status_effects"] = status_effects(record)
     except Exception:
         out["status_effects"] = status_effects(None)
+    try:
+        out["length_notes"] = length_notes(meta.get("assumed_lengths") if isinstance(meta, dict) else None)
+    except Exception:
+        out["length_notes"] = length_notes(None)
 
     def walk(items, depth, group=""):
         for item in items or []:
@@ -416,6 +470,7 @@ def build_summary():
         "life": life,
         "counts": {key: len(rows) for key, rows in life.items()},
         "alpha_gate": _alpha_gate(),
+        "defaults": {"item_minutes": _default_item_minutes()},
     }
 
 

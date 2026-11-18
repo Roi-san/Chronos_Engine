@@ -1,12 +1,25 @@
 # Scheduling Settings - User overrides
 # =====================================
 # Only include settings you want to change from defaults.
-# See scheduling_defaults.yml for available options.
 
+# --- Read by Kairos v2 (the live scheduler) ---
+
+# Length in minutes Kairos plans for a task or habit that has no length set.
+# A routine without a length of its own is planned for the total of its steps.
+# (docs/scheduling/item_lengths.md)
+default_duration_minutes: 30
+
+# Smallest free gap urgent work may open a helper window in (default 1 minute).
+# (docs/scheduling/gaps_and_breathing_room.md)
+# runtime_helper_windows:
+#   minimum_gap_minutes: 1
+
+# --- For the archived pre-Kairos scheduler (scheduling_defaults.yml) ---
+# Kairos v2 does not read these.
 # Example overrides:
 # importance:
 #   base_score: 100
-# 
+#
 # conflict_resolution:
 #   allow_cutting: true
 #

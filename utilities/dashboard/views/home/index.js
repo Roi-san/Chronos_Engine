@@ -468,6 +468,9 @@ export function mount(el, context) {
     // Kept on the plan although today's status falls short of what it needs.
     const kept = (s.today?.status_effects?.kept || {})[key];
     if (kept) reasons.push(kept);
+    // Planned with an assumed length: the default, or a routine's steps added up.
+    const lengthNote = (s.today?.length_notes?.notes || {})[key];
+    if (lengthNote) reasons.push(lengthNote);
     return Array.from(new Set(reasons));
   }
 
@@ -568,6 +571,10 @@ export function mount(el, context) {
         // Kept although today's status falls short of it (the sentence is in the tooltip).
         const kept = (s.today?.status_effects?.kept || {})[ownKey];
         if (!tag && kept) tag = h('span', { class: 'home-tag', title: kept, text: 'tough today' });
+        // Planned with the default length because it has none (the sentence is in the tooltip).
+        if (!tag && (s.today?.length_notes?.unset || []).includes(ownKey)) {
+          tag = h('span', { class: 'home-tag', title: (s.today?.length_notes?.notes || {})[ownKey] || '', text: 'no length' });
+        }
       }
       list.appendChild(h('li', { class: [isCurrent ? 'current' : '', past && !isCurrent ? 'past' : '', done ? 'done' : ''].join(' ').trim() },
         h('span', { class: 'home-day-time', text: `${b.start} – ${b.end}` }),
@@ -755,10 +762,10 @@ export function mount(el, context) {
         const open = (life.task || []).filter((t) => !CLOSED_STATES.has(String(t.status || '').toLowerCase()));
         const unsized = open.filter((t) => !t.duration || String(t.duration).trim() === '0').map((t) => t.name);
         return {
-          name: 'Tasks', what: 'One-off things to get done. Give each a duration so Chronos can place it.',
+          name: 'Tasks', what: 'One-off things to get done. Give each a length; without one, Chronos plans it with your default length.',
           items: open,
           meta,
-          notice: unsized.length ? `${unsized.length} of these ha${unsized.length === 1 ? 's' : 've'} no duration, so Chronos cannot place ${unsized.length === 1 ? 'it' : 'them'} in your day.` : '',
+          notice: unsized.length ? `${unsized.length} of these ha${unsized.length === 1 ? 's' : 've'} no length yet, so Chronos plans ${unsized.length === 1 ? 'it' : 'them'} as ${s.defaults?.item_minutes || 30} min. Set real lengths in Manage.` : '',
           actions: [
             unsized.length && [`Give ${unsized.length === 1 ? 'it' : 'them'} 30 min`, () => sizeItems('task', unsized)],
             canWizard('brain_dump') && ['Brain Dump', () => openWizard('brain_dump')],

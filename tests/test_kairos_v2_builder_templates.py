@@ -211,7 +211,13 @@ class TestClosedBlocksStayClosed(unittest.TestCase):
         }
         self.assertEqual(covered.get("task:read 20 pages"), "parent_closed_today:routine:evening wind down")
 
-    def test_members_of_an_open_untimed_routine_are_still_scheduled(self):
+    def test_an_open_untimed_routine_is_planned_whole_with_its_steps(self):
+        # Changed with decision D1 (docs/scheduling/item_lengths.md, 2026-11-18). A
+        # routine without a length of its own used to be dropped, and only those of
+        # its steps that were in scope by themselves (here a task with a due date)
+        # were placed, one by one. Now the routine is planned as one block for the
+        # total of its steps, which keeps them together, and its steps are covered
+        # by it rather than lost or planned twice.
         day = {
             "Name": "Builder Day",
             "children": [
@@ -222,7 +228,15 @@ class TestClosedBlocksStayClosed(unittest.TestCase):
         }
         schedule = _run_builder_day(day=day)
         blocks = schedule.get("conceptual_schedule", {}).get("conceptual_blocks", [])
-        self.assertIn("Read 20 pages", _all_names(blocks))
+        self.assertIn("Evening Wind Down", _all_names(blocks))
+        self.assertNotIn("Read 20 pages", _all_names(blocks))
+        covered = {
+            row.get("identity"): row.get("covered_by")
+            for row in schedule.get("day_population", {}).get("covered_by_structure", [])
+        }
+        self.assertEqual(covered.get("task:read 20 pages"), "member_of:routine:evening wind down")
+        lengths = {row["name"]: (row["minutes"], row["source"]) for row in schedule.get("assumed_lengths") or []}
+        self.assertEqual(lengths.get("Evening Wind Down"), (30, "steps"))
 
 
 if __name__ == "__main__":
