@@ -1,6 +1,6 @@
 # Standard Item Properties
 
-Last verified: 2026-11-17 (timeblock breaks and the timer, and assumed lengths: 2026-11-18) against `modules/scheduler/kairos_v2.py`, `modules/scheduler/runtime.py`, `modules/scheduler/direction.py`, `modules/scheduler/v1.py` (template helpers), `modules/scheduler/sleep_gate.py` and `modules/item_manager.py`.
+Last verified: 2026-11-17 (timeblock breaks and the timer, and assumed lengths: 2026-11-18; recurrence, `day`, `created`: 2026-11-19) against `modules/scheduler/recurrence.py`, `modules/scheduler/periods.py`, `modules/scheduler/kairos_v2.py`, `modules/scheduler/runtime.py`, `modules/scheduler/direction.py`, `modules/scheduler/v1.py` (template helpers), `modules/scheduler/sleep_gate.py` and `modules/item_manager.py`.
 
 This is a practical reference of item properties that Chronos actively uses today, with the emphasis on what the active scheduler (**Kairos v2**) does with each one. Where a property is written by a builder or wizard but ignored by Kairos v2, it is listed under [Not read by Kairos v2](#not-read-by-kairos-v2).
 
@@ -15,6 +15,7 @@ Keys are case-insensitive at the top level of an item file: `Name:` and `name:` 
 - `category` (string): Ranked in `user/settings/category_settings.yml`; used in scoring and in window filters.
 - `priority` (string): Ranked in `user/settings/priority_settings.yml`; used in scoring.
 - `duration` (number or string): Length in minutes. Accepted: `30`, `"30"`, `1h`, `1.5h`, `15m`, `90 min`, `1h30m`, `2h 15m`. Since 2026-11-18 an item without a usable length is still planned (see [Lengths Kairos assumes](#lengths-kairos-assumes)); before, it could never be placed.
+- `created` (YYYY-MM-DD): The day the item was made. Since 2026-11-19, `new` (and so the dashboard, wizards and an AI using it) writes it on habits, tasks, routines, subroutines, microroutines and timeblocks; a `created` you give wins. Kairos reads it for weekly to yearly items only: one added after its turn this period starts with its next turn (see [Recurrence](#recurrence)).
 - `sleep` (bool): Canonical sleep marker. Kairos also treats an anchor as sleep when its category is `sleep`, it is tagged `sleep`, or its name contains "sleep" or "bedtime". Prefer `sleep: true`. A sleep anchor in the day template sets where the plan ends; see [Bedtime: where the plan ends](#bedtime-where-the-plan-ends).
 
 ### Lengths Kairos assumes
@@ -33,7 +34,7 @@ Kairos considers two sources of work:
 
 1. **The chosen day template.** Every direct child of the day template is a candidate, except anchors (placed separately), windows, and `free`/`buffer` blocks.
 2. **The item library** (`user/habits`, `user/tasks`, `user/routines`, `user/subroutines`, `user/microroutines`, `user/timeblocks`). An item from these folders is a candidate only if at least one of these is true:
-   - `frequency` applies to the day;
+   - its `frequency` puts it on the day (see [Recurrence](#recurrence));
    - it has a `due_date`;
    - it has a `deadline`;
    - a goal it serves is active, or a commitment that counts it is unmet (see [Goals and commitments](#goals-and-commitments)).
@@ -44,7 +45,19 @@ Library items are always skipped when they are bad habits (`polarity: bad`), anc
 
 ### Recurrence
 
-- `frequency` (string or list): `daily`, a weekday name (`monday` ... `sunday`), or several, as a list or a comma/slash string (`monday, wednesday`). `weekly` currently matches **every** day: Kairos does not track which day of the week a weekly item belongs to, so give weekday names instead. `monthly`, `quarterly` and `yearly` match **no** day, so such items are never planned (issue 10; the proposed fix is `docs/scheduling/recurrence_design.md`).
+Verified 2026-11-19 (`modules/scheduler/recurrence.py`). Full rule, decisions, tests and examples: `docs/scheduling/recurrence_design.md`.
+
+- `frequency` (string or list), case-insensitive:
+  - `daily`: on the plan every day. The day after a missed day it gets a small push (only once it has been done at least once before).
+  - weekday names (`monday` ... `sunday`, written out), one or several as a list or a comma/slash string (`monday, thursday`): on those days only. A missed day is gone until next time, with no push.
+  - `weekly`, `monthly`, `quarterly`, `yearly`: **once per period** (weeks run Monday to Sunday; calendar months, quarters and years). On the plan from its **turn** until it is done (or its lighter version is; the item's own `completion_dates` and the daily completion logs both count), then gone until the next period. A missed turn comes back every day until done, with a push that grows as the period runs out (on track, tightening, at risk, last chance), plus a little more when the previous period was missed too. A period that ends without it starts fresh: never a double portion.
+  - anything else (`biweekly`, `every 2 days`, `weekdays`, `mon`): not understood, never planned; listed in `schedule.recurring.unrecognised` (issue 26).
+  - With several values, `daily` wins, then the first period word, then weekday names.
+- `day` (string or number): the item's turn, for `weekly` items a weekday (`saturday` or `sat`), for `monthly` items a day of the month (`15`; a day the month does not have means its last day, so `31` is always the last day). Not read for quarterly and yearly items yet. **Without a usable `day`, Chronos spreads the item**: all items of the same period without a day, in name order, are spaced evenly over it (7 weekly chores: one a day; 6 monthly: the 3rd, 8th, 13th, 18th, 23rd, 28th), avoiding days that hold a picked day. The spread is worked out again on every plan; adding, removing or renaming an item in the middle of a period can move the others.
+- `created` (see [General](#general-all-item-types)): a weekly to yearly item whose turn this period came before `created` starts with its next turn instead of counting as missed.
+- Before 2026-11-19 (issue 10): `weekly` matched every day and `monthly`, `quarterly` and `yearly` none.
+
+What happened is recorded in `schedule.recurring` (each once-per-period item's turn, where it came from, whether it is on the plan, its push and reason); Home shows the reason on the block ("Once a week: missed its day (Saturday), last chance this week.").
 
 ### Due dates
 
@@ -185,13 +198,14 @@ Full detail and the numbers: `docs/scheduling/direction_goals_commitments.md`.
 
 - `goal` (string, on a task or habit): The goal this item serves. Also read: a goal's `supporting_habits`, a milestone's `criteria` / `links`, and a task's `project` when that project has a `goal`.
 - On a goal: `target_date`, `priority`, `status` (completed, archived, cancelled and on-hold goals push nothing).
-- On a commitment: `rule: {kind: frequency, times: N, period: day|week|month}` and `targets: [{type: habit, name: ...}]`. "Never" commitments are not scheduled.
+- On a commitment: `rule: {kind: frequency, times: N, period: day|week|month|quarter|year}` and `targets: [{type: habit, name: ...}]` (quarter and year since 2026-11-19; periods come from the shared helper `modules/scheduler/periods.py`). "Never" commitments are not scheduled.
 - `mini_of` (string, on the lighter item) or `mini_variant` (string, on the full item): Links a full item to a lighter version. The lighter one is used on days the full one's `status_requirements` do not fit, and when the full one does not fit in the day (if the lighter one is shorter). It inherits the goal and commitment pressure and counts toward the commitment.
 
 ## Scoring inputs
 
 - `happiness` (string or list): Keys from `user/settings/map_of_happiness.yml`; the best-ranked one adds to the score.
 - `category`, `priority`, `due_date`, `deadline`, goal and commitment pressure: see above.
+- Recurring pressure (since 2026-11-19): a weekly to yearly item on the plan gets `24 x level` points (on track 4.8 to last chance 24), a daily item missed yesterday 4.8, times the Recurring Pressure weight / 5. It also counts as importance on a tough day (status scale-down), never as urgency.
 - The weight of each factor is set in `user/settings/scheduling_priorities.yml`. (`today ... prioritize:key=value` only steers which day template is chosen; it does not change these weights.)
 
 ## Not read by Kairos v2

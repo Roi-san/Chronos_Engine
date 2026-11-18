@@ -1,7 +1,7 @@
 # Start here
 
 For anyone, a person or a new AI session, picking up work on this repository. Ten minutes here saves hours.
-Last updated: 2026-11-18 (update this line, and "Where things stand", every work session).
+Last updated: 2026-11-19 (update this line, and "Where things stand", every work session).
 
 ## What Chronos is
 
@@ -53,7 +53,9 @@ Two old pages, `docs/scheduling/scheduling_algorithm_overview.md` and `schedulin
 | `modules/console.py` | The CLI: parsing, dispatch, scripts. |
 | `modules/item_manager.py` | Item files: create, read, write. |
 | `modules/scheduler/kairos_v2.py` | **Kairos v2, the only scheduler that runs** (about 7600 lines; map below). |
-| `modules/scheduler/direction.py` | Goal and commitment pressure, periods, "was it done" history. |
+| `modules/scheduler/direction.py` | Goal, commitment and recurring pressure (the signals Kairos scores and Home explains). |
+| `modules/scheduler/periods.py` | **The one shared helper for days and periods** (since 2026-11-19): what day it is, where a day / week / month / quarter / year starts and ends, and on which days something was done (item history, the daily completion logs, lighter versions). Commitments and recurring items both use it. Anything new that needs "today" or "this week" should too. |
+| `modules/scheduler/recurrence.py` | Recurring items (D2): what `frequency` means, each weekly to yearly item's turn (a picked `day:` or spread over the period), and whether it is on today's plan. `docs/scheduling/recurrence_design.md`. |
 | `modules/scheduler/runtime.py` | The day file format and the timer's plan (`build_schedule_plan`). |
 | `modules/scheduler/v1.py` | Template helpers Kairos uses, and the schedule-file editors behind `trim`, `cut`, `shift`, `mark` and friends. |
 | `modules/scheduler/kairos.py`, `weekly_generator.py`, `verify_kairos.py` | Kairos v1 stubs that only raise. The full v1 is in git history: `git show b1b0bb2:modules/scheduler/kairos.py`. |
@@ -80,7 +82,7 @@ There have been three schedulers: an unreachable pre-Kairos one at the bottom of
 | `select_week_template`, `derive_week_days`, `select_day_template` | Which day template applies | Template choice: weekday, `prioritize:` preferences, closest status, then name |
 | `commit_anchor_skeleton` | Anchors (`reschedule: never`) and hard injections | |
 | `model_day_budget` | Where the plan ends (the next bedtime) | `_resolve_next_bedtime`, `PLAN_LAST_MINUTE_OF_DAY` |
-| `build_candidate_universe` | What is in scope today | Goals/commitments push items in (`direction.py`); every candidate passes through `_normalize_candidate`, where items without a length get one (`_effective_length`) |
+| `build_candidate_universe` | What is in scope today | Goals/commitments push items in (`direction.py`); recurring items are in scope when `recurrence.py` says it is their turn and they are not done this period (`schedule.recurring`); every candidate passes through `_normalize_candidate`, where items without a length get one (`_effective_length`) |
 | `remove_reality_impossible_candidates` | Drops done/skipped items; scales down to today's status | `_scale_down_for_status` |
 | `populate_day_and_windows` and the window phases | Fixed-time slots, windows | `_fill_structure_length`, `_scale_down_fixed_time_nodes` |
 | `handle_gaps_buffers_and_recovery`, `build_runtime_helper_windows`, `place_remaining_structure` | Gap filling; helper windows for urgent work | `_runtime_helper_settings` (earliest gap) |
@@ -88,9 +90,9 @@ There have been three schedulers: an unreachable pre-Kairos one at the bottom of
 | `fill_quick_wins`, `finalize_conceptual_schedule` | Final blocks | Breathing room in `_apply_breathing_room` |
 | `build_timer_handoff`, `persist_decision_log_artifact` | The timer's units; the decision log | `_build_timer_execution_units` |
 
-Scoring: `_urgency_bonus` adds due date, deadline, goal and commitment points; weights come from `user/settings/scheduling_priorities.yml` (0-10, 5 neutral, 0 off).
+Scoring: `_urgency_bonus` adds due date, deadline, goal, commitment and recurring points; weights come from `user/settings/scheduling_priorities.yml` (0-10, 5 neutral, 0 off; rows include Goal Alignment, Commitment Pressure and, since 2026-11-19, Recurring Pressure).
 
-**Output.** `user/schedules/schedule_YYYY-MM-DD.yml` with `kind: kairos_v2_day_runtime` and a `schedule` map of records: `day_template`, `day_budget`, `candidate_universe`, `assumed_lengths`, `reality_filtered_candidates`, `status_scale_down`, `direction`, `day_population`, `conceptual_schedule`, `breathing_room`, `timer_handoff`, and more. The decision log is `user/logs/kairos_v2_decision_log_latest.md`. Home reads the day file through `home_api.py`; the view only displays.
+**Output.** `user/schedules/schedule_YYYY-MM-DD.yml` with `kind: kairos_v2_day_runtime` and a `schedule` map of records: `day_template`, `day_budget`, `candidate_universe`, `assumed_lengths`, `recurring`, `reality_filtered_candidates`, `status_scale_down`, `direction`, `day_population`, `conceptual_schedule`, `breathing_room`, `timer_handoff`, and more. The decision log is `user/logs/kairos_v2_decision_log_latest.md`. Home reads the day file through `home_api.py`; the view only displays.
 
 **Settings Kairos v2 reads.** `scheduling_priorities.yml` (weights), `scheduling_settings.yml` (`default_duration_minutes`, `runtime_helper_windows`), `buffer_settings.yml` (`global_dynamic_buffer`), `status_settings.yml` with each `<dimension>_settings.yml`, `quick_wins_settings.yml`, category and priority settings, `map_of_happiness.yml`. It does not read `scheduling_defaults.yml`, and it ignores several options the Today widget sends (issue 11).
 
@@ -127,5 +129,6 @@ Scoring: `_urgency_bonus` adds due date, deadline, goal and commitment points; w
 
 ## Where things stand
 
-- 2026-11-18: on `home-hub-fixes`, latest commit pushed. Full suite: **380 tests, 378 pass**; the 2 in `tests/test_timer_anchor_wait.py` fail only between 22:30 and midnight (issue 21, a test bug). Any other failure is new.
-- Roadmap phase 1, "nothing silently missing": 1a item lengths done (D1), 1b habit tests done. Next: 1c recurring items (D2), built exactly as written in `docs/scheduling/recurrence_design.md` (the pilot gave the go on 2026-11-18); not started.
+- 2026-11-19: on `home-hub-fixes`, step 1c (recurring items, D2) committed as `0d0578a` and pushed. Full suite with it: **486 tests, 486 pass** (after midnight; the 2 in `tests/test_timer_anchor_wait.py` fail between 22:30 and midnight, issue 21, a test bug). Any other failure is new.
+- Roadmap phase 1, "nothing silently missing": 1a item lengths (D1), 1b habit tests and 1c recurring items (D2) are done. Next: phase 2, the fresh-install walkthrough (`docs/ROADMAP.md`). The pilot (2026-11-19): small things first, and build so nothing needs rebuilding.
+- Gotchas added on 2026-11-19: the dashboard reports a console command as done whenever it exits normally, even after an error (issue 23), so check the result on disk; Playwright for the browser checks is installed in an old scratchpad (`.../cb8fab29-.../scratchpad/pw/node_modules`; reinstall `playwright-core@1.48.2` if Temp was cleared).

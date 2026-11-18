@@ -96,18 +96,19 @@ Chores (habit convention)
   - They are not a separate item type; they use the normal habit tracker.
 
 - Default chores
-  - Chronos ships with `_example` chore habits you can clone into live ones.
-  - Use the **Chore Setup** wizard from the dashboard to activate them.
+  - The **Chore Setup** wizard on the dashboard lists 26 common chores (daily to yearly) and creates the ones you pick. It copies an `_example` chore habit when one exists; `alpha_v0.3` ships none, so since 2026-11-19 the wizard creates them from its own list (before, it said it had created them but had not, issue 22).
+  - Weekly and monthly chores can get a day in the wizard; with "Any day", Chronos spreads them over the week or month.
 
 - Example YAML
   ```yaml
-  name: Take Out Trash _example
+  name: Take Out Trash
   type: habit
   chore: true
   frequency: weekly
+  day: friday        # optional; without it Chronos spreads weekly chores over the week
   tags: [chore, weekly]
   ```
-  - Note (2026-11-18): Kairos v2 currently treats `frequency: weekly` as every day, so this chore would be planned daily. Give it a weekday instead (`frequency: tuesday`). Tracked in `docs/ISSUES_AND_NEXT_STEPS.md`.
+  - Since 2026-11-19 a weekly chore is planned on its day (or the day Chronos spreads it to) and, if missed, every following day of the week until done. Monthly, quarterly and yearly chores work the same way over their period. (Before, `weekly` was planned every day and the others never.) Details: `docs/scheduling/recurrence_design.md`.
 
 ----------------------------------------
 

@@ -73,7 +73,8 @@ Parsed by `today` but ignored by Kairos v2 (2026-11-18): `buffers:`, `breaks:`, 
 ### 3) Item Properties That Affect Scheduling
 - Anchoring: `reschedule: never` (the only anchor rule in v2; `reschedule: false` is not one).
 - Timing and duration: `start_time` / `end_time` (`ideal_*` and `start` / `end` are accepted), `duration` (`30`, `45m`, `1h30m`). An item with no duration cannot be placed.
-- Recurrence and urgency: `frequency`, `due_date`, `deadline`. A library item with none of these (and no goal or commitment link) is never considered unless it is in the day template. `frequency: weekly` currently matches every day; use weekday names.
+- Recurrence and urgency: `frequency`, `due_date`, `deadline`. A library item with none of these (and no goal or commitment link) is never considered unless it is in the day template.
+- `frequency` (since 2026-11-19, `docs/scheduling/recurrence_design.md`): `daily`; weekday names written out (`monday, thursday`) for fixed days; `weekly`, `monthly`, `quarterly`, `yearly` for once per period. A once-per-period item is planned from its turn until it is done, then not again until the next period; a missed turn comes back daily. Give a weekly item `day: <weekday>` or a monthly item `day: <1-31>` when the user names a day; otherwise leave `day` out and Chronos spreads such items over the period (do not invent days to spread them yourself). Other values (`biweekly`, `weekdays`, `mon`) are not understood and never planned. `new` records `created`; keep it.
 - Direction: `goal`, a commitment's `rule` and `targets`, `mini_of` / `mini_variant` (the lighter version).
 - Status: `status_requirements`, `status_grace`.
 - Overflow relief: `trim: allow` with `max_trim_percent`, `cut: allow`. Everything else is protected.

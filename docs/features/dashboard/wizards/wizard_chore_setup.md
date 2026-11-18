@@ -4,6 +4,13 @@
 Guided setup for recurring chores and cloned starter chore structures.
 Wizards should produce deterministic item/settings outcomes that remain editable through normal CLI and dashboard tools.
 
+## What it does (checked 2026-11-19)
+- Lists 26 common chores in five columns (5 daily, 7 weekly, 6 monthly, 4 quarterly, 4 yearly), all ticked, plus **custom chores** (name, description, how often, minutes, day).
+- **Weekly and monthly chores have a day picker.** "Any day (Chronos spreads it)" is the default: Kairos then spreads chores without a day evenly over the week or month, so no day gets a wall of chores. A picked day is written as `day:` (`saturday`, or `15` for the 15th; `31` always means the last day). Quarterly and yearly chores are always spread.
+- **Create Selected Chores** makes each ticked chore as a habit with `chore: true`, `frequency`, `duration`, `description`, `tags: [chore, <frequency>]`, `created` (today) and `day` when picked. It copies a `<name> _example` habit when one exists; otherwise (as on `alpha_v0.3`, which ships none) it creates the chore from its own list. Existing chores are skipped. Each chore is checked after it is made, and the status line names any that could not be made.
+- Before 2026-11-19 the wizard said "Created N chores" but created none of its built-in chores (issue 22), and saved custom chores as daily habits with no length (issue 29). Both fixed; see `docs/scheduling/recurrence_design.md`.
+- How the chores are then planned (a chore's turn, coming back daily until done, the push as the period runs out): `docs/scheduling/recurrence_design.md`. The walk-through in a real browser: `scripts/regression/chore_setup_check.js`.
+
 ## CLI
 - Related command patterns: `new chore/task templates; copy item workflows via CLI equivalents`.
 - CLI is the verification and fallback path when wizard UI is unavailable or ambiguous.

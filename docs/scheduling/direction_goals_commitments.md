@@ -16,7 +16,7 @@ Kairos used to rank work by category, priority, due date, deadline and happiness
 | You want | Write this |
 | --- | --- |
 | A task or habit to serve a goal | `goal: <goal name>` on the item. Also read: the goal's `supporting_habits`, a milestone's `criteria` / `links`, and a task's `project` when the project has a `goal`. |
-| A commitment the scheduler can act on | `rule: {kind: frequency, times: 3, period: week}` and `targets: [{type: habit, name: Gym session}]`. Period is `day`, `week` (Monday to Sunday) or `month`. |
+| A commitment the scheduler can act on | `rule: {kind: frequency, times: 3, period: week}` and `targets: [{type: habit, name: Gym session}]`. Period is `day`, `week` (Monday to Sunday), `month`, or since 2026-11-19 `quarter` or `year` (periods come from the shared helper `modules/scheduler/periods.py`). |
 | A lighter version | `mini_of: Gym session` on the lighter item (or `mini_variant: Home mobility` on the full one). |
 | "The full version needs a good day" | `status_requirements: {energy: [high, medium], health: [excellent, good]}` on the full item. |
 
@@ -39,7 +39,8 @@ For a frequency commitment Kairos looks at how many are still to do and how many
 - **After a miss:** if the previous period ended unmet, the level rises by 0.2 until the current period is met. This applies only when there is history from before the current period, so a brand-new commitment is not treated as missed.
 - **Met:** no push at all.
 - **Interchangeable targets** ("gym or run, 3 a week"): only as many as today needs get the full push; the others stay at 0.2.
-- **What counts as done:** the target's `completion_dates`, the daily completion logs, and completions of its lighter version.
+- **What counts as done:** the target's `completion_dates`, the daily completion logs, and completions of its lighter version. Since 2026-11-19 the commitment tracker (`modules/commitment/main.py`: the Commitments widget, `commitments check` and its triggers) reads the same logs, so a completion made through Start day, which is only written to the log, counts there too (issue 24). The tracker still counts completions while the scheduler counts days (issue 28).
+- **Recurring items** (weekly to yearly habits and chores) get their own push with the same curve, from `modules/scheduler/recurrence.py`; when an item is also a commitment target, both apply. `docs/scheduling/recurrence_design.md`.
 
 ## Goal pressure
 
