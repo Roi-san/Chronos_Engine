@@ -1,6 +1,7 @@
 # Start here
 
 For anyone, a person or a new AI session, picking up work on this repository. Ten minutes here saves hours.
+**Coming back to continue the work? Read `docs/NEXT_SESSION.md` first**: where things stand, what to do next in what order, and the biggest obstacles to smooth scheduling.
 Last updated: 2026-11-19 (update this line, and "Where things stand", every work session).
 
 ## What Chronos is
@@ -15,7 +16,7 @@ Chronos Engine is a local "life engine". You describe your life once: goals, com
 
 - **The friend** is Chronos's original author and works upstream. Their newest branch is `alpha_v0.3` (`07a2bf1`, 2026-04-17). Git remotes: `upstream` (theirs) and `origin` (the pilot's fork).
 - **The pilot** is the person this work is for. They use Chronos themselves and want a few friends to use it.
-- Work happens on **`home-hub-fixes`**, built on `home-hub`, both pushed to `origin`. Nothing is merged upstream; scheduler changes are a prototype for the friend to review.
+- Work happens on **`usable-chronos`** (since 2026-11-19), branched from `home-hub-fixes` at `b1f223e`, which is built on `home-hub`; all pushed to `origin`. (Until 2026-11-19 the work was on `home-hub-fixes`.) Nothing is merged upstream; scheduler changes are a prototype for the friend to review.
 
 ## The philosophy (do not skip this)
 

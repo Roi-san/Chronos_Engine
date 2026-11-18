@@ -157,3 +157,10 @@ Every change made on the `home-hub` and `home-hub-fixes` branches, oldest first:
 - **Checked.** 106 new tests, written first (98 failed before, 8 controls passed); full suite 486 passed, 0 failed (380 before); four deliberate breaks were each caught by the tests; fake-life dumps identical except `rich_dump`, where the weekly "Read" habit is no longer planned before its Thursday turn; the wizard walked to the end in headless Chrome before (said 7 created, made 1 wrong file) and after (7 correct files); the real `today reschedule` with the wizard's chores; Home's "Right now" in headless Chrome showing a missed weekly chore's reason; four simulated weeks with all 26 wizard chores (at most 2 once-per-period chores on a day; a skipped chore came back daily until done).
 - **Found, logged.** Issues 22 to 30 (22, 27 and 29 fixed in this step; 24 fixed for commitments, open for habit streaks; 23, 25, 26, 28 and 30 open).
 - **Details.** `docs/scheduling/recurrence_design.md` (decisions 1 to 9, the rule as built, tests, verification, limits, build log).
+
+## 2026-11-19 ~01:50 · `0d0578a`, docs `3e12da5`, `b1f223e` · Step 1c committed; new branch `usable-chronos`
+
+- **Handover restored.** `docs/HOME_HUB_HANDOVER.md` had been overwritten by accident in the pilot's editor (an older copy with a stray `/`); restored from the last commit with `git restore`, then the three step-1c additions put back (recurring items, the Chore Setup fix, the test count).
+- **Committed and pushed** on `home-hub-fixes`: code `0d0578a`, docs `3e12da5`, regression README `b1f223e`. Every "not committed yet" placeholder replaced by the hash.
+- **New branch `usable-chronos`** from `home-hub-fixes` at `b1f223e`, at the pilot's request. All future work goes there.
+- **`docs/NEXT_SESSION.md`** (new): where things stand, the order of work, the biggest obstacles to smooth scheduling, how the pilot wants the work done. START_HERE points to it; the roadmap has the obstacle list.

@@ -77,6 +77,17 @@ These are the "missing buffers, breaks, sprints" (#11).
 
 Starting #10 now does not get in the way of the switches above. It touches recurrence and completion history, which none of them use.
 
+## The biggest obstacles to smooth scheduling (2026-11-19)
+
+Written after phase 1, at the pilot's request; kept up to date in `docs/NEXT_SESSION.md`, which also gives the order to tackle them.
+
+1. **Unknown breakpoints** (phase 2): parts of the daily loop nobody has walked to the end, and a dashboard that reports a failed command as done (#23).
+2. **Appointments do not block time** (#17).
+3. **Free time** (D3): light days are packed from now; tasks without a date are never planned (#13).
+4. **Completions are recorded in four ways** (#24, #4, #28, #30): fix once, before building on history.
+5. **What "today" is for a night owl** (#9), now one function in `modules/scheduler/periods.py`.
+6. **Routines as one block, no breaks in long blocks** (#15, #18).
+
 ## Order of work (proposal)
 
 | Phase | Step | Tracker | Size | Needs |
@@ -111,4 +122,4 @@ Why this order: phase 1 fixes things that are wrong today and that everything el
 - 2026-11-18: first version, after the pilot asked for a strategy before more fixes. Written from the open list given in chat; the chat's "#5" (tasks created without a length) is tracker #12.
 - 2026-11-18: the pilot agreed with the plan and D1. Step 1a built and verified (365 passed, 0 failed). Found while doing it: a routine without its own length vanished from the plan with its steps; now fixed by the same rule. D2 written up as a proposal for the pilot's go; next: step 1b (habit tests), then 1c.
 - 2026-11-18: step 1b done (`65355e2`); the pilot gave the go for D2 as written. The session then hit its usage limit before 1c started.
-- 2026-11-19: before building D2, checking it against the Chore Setup wizard showed that items without a day would all join on the first day of their period (6 monthly chores, 3 hours, on the 1st; 14 chores on 1 January). The pilot chose option B: spread them. Step 1c built and verified: 106 new tests, full suite 486 passed, 0 failed, a real browser walk of the wizard, the real `today reschedule`, and four simulated weeks with all 26 wizard chores (at most 2 once-per-period chores on a day). Found on the way and logged: #22-#30 (#22, #27, #29 fixed in the same step). Next: commit 1c on the pilot's go, then phase 2 (the fresh-install walkthrough). The pilot asked to work small things first and to build so nothing needs rebuilding.
+- 2026-11-19: before building D2, checking it against the Chore Setup wizard showed that items without a day would all join on the first day of their period (6 monthly chores, 3 hours, on the 1st; 14 chores on 1 January). The pilot chose option B: spread them. Step 1c built and verified: 106 new tests, full suite 486 passed, 0 failed, a real browser walk of the wizard, the real `today reschedule`, and four simulated weeks with all 26 wizard chores (at most 2 once-per-period chores on a day). Found on the way and logged: #22-#30 (#22, #27, #29 fixed in the same step). Committed as `0d0578a` on the pilot's go. Next: phase 2 (the fresh-install walkthrough), on the new branch `usable-chronos`. The pilot asked to work small things first and to build so nothing needs rebuilding.
