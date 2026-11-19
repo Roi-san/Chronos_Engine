@@ -44,7 +44,7 @@ Scripting & Automation Docs
   - Locate Python (or install via winget if missing).
   - Create `.venv` and install requirements.
 3) Guided onboarding
-- Run `onboarding_wizard.bat` (CLI) or from the dashboard Wizards menu choose **Chronos Onboarding Wizard** to customize nickname, categories, statuses, and clone the sample templates/items.
+- Run `onboarding_wizard.bat` (CLI) or from the dashboard Wizards menu choose **Chronos Onboarding Wizard** to customize nickname, categories, statuses and preferences. (Changed 2026-11-19: it no longer clones sample templates and items, which this release does not ship; its "Your Day" and "Goals & Commitments" steps open Life Setup, Chore Setup and Goal Planning instead.)
 4) Launch CLI
 - Run `console_launcher.bat` (or `python modules/console.py`).
 - Type `help` to see available commands.

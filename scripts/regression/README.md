@@ -47,6 +47,8 @@ Identical dumps mean the change did not move anything in those fake lives. When 
 
 `brain_dump_check.js` drives the dashboard in headless Chrome: Home's **no length** tag, then the Brain Dump wizard with a Length field. Copy its pattern for other dashboard checks.
 
+`onboarding_check.js` walks the dashboard's onboarding to the end (added 2026-11-19, issue 32): types a nickname with the keyboard, prints every step's text, opens Life Setup from step 4, saves a day template as the Day Builder does, closes Life Setup and prints what step 4 says then, and at the end prints what is on disk (nickname, day templates, routines, habits, goals, commitments, rewards, achievements) through the server's API. To walk Life Setup itself to the end from inside onboarding, see the 2026-11-19 work-log entry (it used the scratch driver `drive.js` with `W.check` / `W.click` on Life Setup).
+
 `chore_setup_check.js` walks the Chore Setup wizard to the end (six built-in chores and one custom weekly chore, days picked where offered) and prints what the wizard says; `python scripts/regression/chore_files.py <export>` then lists what it really wrote (`frequency`, `day`, `duration`, `created`, and any nested `data` field). Always compare the two: the dashboard reports a console command as done whenever it exits normally (issue 23).
 
 ```bash

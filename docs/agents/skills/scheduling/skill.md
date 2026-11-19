@@ -66,7 +66,8 @@ Parsed by `today` but ignored by Kairos v2 (2026-11-18): `buffers:`, `breaks:`, 
 - Status picks the closest-matching day template, and scales items down when today falls short of their `status_requirements` (see the `status_management` skill).
 
 ### 2) Template + Windows
-- Day template selection: eligible for the weekday (`days`), then `prioritize:` preferences, then closest status match, then most matched status dimensions, then name. With several eligible templates and no status requirements, the alphabetically first wins; `template:<name>` forces one.
+- Day template selection: eligible for the weekday (`days`; `days: []` is any day), then `prioritize:` preferences, then closest status match, then most matched status dimensions, then (since 2026-11-19) a template whose `days` names today, then name. With several general templates and no status requirements, the alphabetically first wins; `template:<name>` forces one. The plan records why (`schedule.day_template_choice`) and Home shows it.
+- Sleep (since 2026-11-19, `modules/scheduler/sleep_blocks.py`): only a day-template block marked as sleep (`sleep: true`, category or tag `sleep`) is sleep; names never decide, except on a day with no marked block. An item's own `start_time` is a wish: kept when free, else planned in free time (`schedule.wished_times`).
 - `window: true` nodes are placement containers. Only the `tags` and `category` filter keys are honoured.
 - `timeblock` subtypes: only `free` and `buffer` change placement. A `break` timeblock with a time is placed like any fixed block, and the timer runs it as a break.
 

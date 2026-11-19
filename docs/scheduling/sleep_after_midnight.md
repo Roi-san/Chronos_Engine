@@ -4,7 +4,7 @@ Status (branch `home-hub-fixes`, 2026-11-18): **implemented**. Fixes issue 1 in 
 
 ## The problem
 
-Kairos plans flexible work into the time between "now" and the **sleep boundary**: the start of the day template's sleep anchor (`reschedule: never` plus `sleep: true`, category `sleep`, a `sleep` tag, or "sleep"/"bedtime" in the name). The boundary was read as a clock time *on the plan's own date*. So a sleep anchor at `02:00` meant 02:00 **this morning**, and from 02:00 on, Kairos saw 0 minutes left and placed no flexible work.
+Kairos plans flexible work into the time between "now" and the **sleep boundary**: the start of the day template's sleep anchor (`reschedule: never` plus `sleep: true`, category `sleep`, a `sleep` tag, or "sleep"/"bedtime" in the name; **changed 2026-11-19, decision D5:** a block marked as sleep, with or without `reschedule: never`, and a name only on a day with no marked block, see `modules/scheduler/sleep_blocks.py`). The boundary was read as a clock time *on the plan's own date*. So a sleep anchor at `02:00` meant 02:00 **this morning**, and from 02:00 on, Kairos saw 0 minutes left and placed no flexible work.
 
 This hit the pilot every day: their real `user/days/life_skeleton.yml` has **Core Sleep 02:00-10:30** (checked read-only on 2026-11-18). Every re-plan between 02:00 and midnight came back with their fixed blocks (breakfast, work, dinner) and nothing else.
 

@@ -1,6 +1,6 @@
 # Standard Item Properties
 
-Last verified: 2026-11-17 (timeblock breaks and the timer, and assumed lengths: 2026-11-18; recurrence, `day`, `created`: 2026-11-19) against `modules/scheduler/recurrence.py`, `modules/scheduler/periods.py`, `modules/scheduler/kairos_v2.py`, `modules/scheduler/runtime.py`, `modules/scheduler/direction.py`, `modules/scheduler/v1.py` (template helpers), `modules/scheduler/sleep_gate.py` and `modules/item_manager.py`.
+Last verified: 2026-11-17 (timeblock breaks and the timer, and assumed lengths: 2026-11-18; recurrence, `day`, `created`: 2026-11-19; sleep marks, template choice, an item's own time: 2026-11-19 late) against `modules/scheduler/recurrence.py`, `modules/scheduler/periods.py`, `modules/scheduler/kairos_v2.py`, `modules/scheduler/runtime.py`, `modules/scheduler/direction.py`, `modules/scheduler/v1.py` (template helpers), `modules/scheduler/sleep_gate.py` and `modules/item_manager.py`.
 
 This is a practical reference of item properties that Chronos actively uses today, with the emphasis on what the active scheduler (**Kairos v2**) does with each one. Where a property is written by a builder or wizard but ignored by Kairos v2, it is listed under [Not read by Kairos v2](#not-read-by-kairos-v2).
 
@@ -16,7 +16,7 @@ Keys are case-insensitive at the top level of an item file: `Name:` and `name:` 
 - `priority` (string): Ranked in `user/settings/priority_settings.yml`; used in scoring.
 - `duration` (number or string): Length in minutes. Accepted: `30`, `"30"`, `1h`, `1.5h`, `15m`, `90 min`, `1h30m`, `2h 15m`. Since 2026-11-18 an item without a usable length is still planned (see [Lengths Kairos assumes](#lengths-kairos-assumes)); before, it could never be placed.
 - `created` (YYYY-MM-DD): The day the item was made. Since 2026-11-19, `new` (and so the dashboard, wizards and an AI using it) writes it on habits, tasks, routines, subroutines, microroutines and timeblocks; a `created` you give wins. Kairos reads it for weekly to yearly items only: one added after its turn this period starts with its next turn (see [Recurrence](#recurrence)).
-- `sleep` (bool): Canonical sleep marker. Kairos also treats an anchor as sleep when its category is `sleep`, it is tagged `sleep`, or its name contains "sleep" or "bedtime". Prefer `sleep: true`. A sleep anchor in the day template sets where the plan ends; see [Bedtime: where the plan ends](#bedtime-where-the-plan-ends).
+- `sleep` (bool): Marks a block on a day template as sleep. **Changed 2026-11-19 (decision D5, `modules/scheduler/sleep_blocks.py`):** only a block (a timeblock, or a node with no type) on a day template can be sleep. `sleep: true`, category `sleep` or a `sleep` tag marks it (Life Setup and the Sleep Settings widget write these), with or without `reschedule: never`. On a habit, routine, microroutine or task these marks and the name change nothing: it is planned like any other item (a "Bedtime Routine" and the Sleep Settings wind-down pack are planned). A day template with no marked block falls back to a fixed timeblock whose name contains "sleep"; the plan records it (`schedule.sleep_blocks.by_name`) and Home says so. (Before: any anchor counted when its category or tag was `sleep` or its name contained "sleep" or "bedtime", and a sleep block without `reschedule: never` did not count.) A sleep block sets where the plan ends; see [Bedtime: where the plan ends](#bedtime-where-the-plan-ends).
 
 ### Lengths Kairos assumes
 
@@ -41,7 +41,7 @@ Kairos considers two sources of work:
 
    An item with none of these never reaches the plan, even if a window's tag filter would match it.
 
-Library items are always skipped when they are bad habits (`polarity: bad`), anchors (`reschedule: never`), sleep blocks, windows, or `free`/`buffer` blocks.
+Library items are always skipped when they are bad habits (`polarity: bad`), anchors (`reschedule: never`; issue 47), sleep blocks (since 2026-11-19 only a *block* marked as sleep, never a habit or routine), windows, or `free`/`buffer` blocks.
 
 ### Recurrence
 
@@ -76,15 +76,16 @@ An item marked skipped today is not handed back by `today reschedule` for the re
 
 ## Day templates
 
-- `days` (list or string): Weekday names the template is eligible for (`[monday, tuesday]`). A template with no `days` is eligible every day.
+- `days` (list or string): Weekday names the template is eligible for (`[monday, tuesday]`). A template with no `days`, or with `days: []`, is eligible every day (`days: []` matched no day before 2026-11-19). The Day Builder has no Days field yet: type it in the Extra box.
 - `status_requirements` (map): See [Status](#status). On a day template it makes the template a closer or worse match for today.
 - `children` (list): The template's structure. `sequence` at the root of a template is also read for ordering. Kairos v2 does not expand `items`.
 
 How the template is chosen:
 
 1. Templates eligible for the weekday are collected from `user/days/`.
-2. They are ranked by: the `prioritize:` preferences passed to `today`, then closest status match, then most matched status dimensions, then **name**.
-3. The first wins, so with several eligible templates and no status requirements, the alphabetically first one is used. `template:<name>` on the command line forces one.
+2. They are ranked by: the `prioritize:` preferences passed to `today`, then closest status match, then most matched status dimensions, then (since 2026-11-19, D6) a template whose `days` names today before one without, then **name**.
+3. The first wins, so with several general templates and no status requirements, the alphabetically first one is used. `template:<name>` on the command line forces one.
+4. Since 2026-11-19 the plan says why: `schedule.day_template_choice` (`name`, `reason`: chosen / only / preference / status / weekday / name / none, `why` in words), shown on Home's Today card ("Day template: Weekend (it is set for Saturdays).").
 
 ### Inheritance
 
@@ -96,6 +97,8 @@ A template child takes these properties from its parent template unless it sets 
 
 - `start_time` / `end_time` (HH:MM): The fields Kairos places by.
 - `ideal_start_time` / `ideal_end_time`, `start` / `end`: Accepted as fallbacks when `start_time` / `end_time` are missing; the Day Builder and Routine Builder write `ideal_*`. An explicit `start_time` / `end_time` always wins.
+
+**An item's own time (since 2026-11-19, decision D7): a wish.** A habit, routine, task or chore in your library (not on the day template) with `start_time` (or `ideal_start_time` / `start`) is planned at that time when its whole length is free (no anchor, timed block, window or earlier wish there), the time has not passed, and it ends before bedtime. Otherwise it is planned like any item, in free time. Every such item is listed in `schedule.wished_times` (`placed`, `why`); Home says when one moved. It only applies on days the item is on the plan anyway (its frequency, due date, goal, commitment). Fixed items in the library (`reschedule: never`) are still not planned at all (issue 47).
 
 A template node with a start and an end (or a start and a duration) that is not an anchor, window, free or buffer block is placed as a **fixed-time block** at that time. On a day that falls short of its `status_requirements` (on the node or on the item it points at), the same scale-down rule as for flexible items applies, keeping the start time: the lighter version takes the slot for its own length, or the slot is kept (within grace, urgent, important) or freed so other work can use the time. See [Status](#status).
 
@@ -109,7 +112,7 @@ Anchors come only from the chosen day template (at any depth under `children`) a
 
 Verified 2026-11-18 (`model_day_budget`, `_resolve_next_bedtime`). Full rule, decisions and tests: `docs/scheduling/sleep_after_midnight.md`.
 
-Sleep anchors (a `reschedule: never` node that counts as sleep, see `sleep` above) are not placed as blocks. Their `start_time` is the bedtime, and flexible work is planned only up to the next bedtime:
+Sleep anchors (the day template's sleep blocks, see `sleep` above; until 2026-11-19 only `reschedule: never` nodes, issue 46) are not placed as blocks. Their `start_time` is the bedtime, and flexible work is planned only up to the next bedtime:
 
 - A sleep anchor starting at **12:00 or later** is a bedtime today (`23:30` ends the plan at 23:30).
 - A sleep anchor starting **between 00:00 and 11:59** is a bedtime **after midnight**. It ends the day *before* it, so the plan runs to **23:59** and nothing is placed past the end of the calendar day. Only after midnight, while it is still ahead (00:30 with a `02:00` bedtime), does the plan run up to it.

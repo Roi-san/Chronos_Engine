@@ -78,7 +78,7 @@ Full suite, excluding `tests/test_kairos.py` (the archived v1 scheduler raises o
 - **Unit versus steps.** A routine placed as a unit shows as one block with no children, so the Timer and the Home view cannot show "now: Brush teeth". Giving fixed-time and unit blocks their children laid out inside the slot is the natural next step.
 - **Tasks with no due date.** `build_candidate_universe` admits only recurring items and items with a due date or deadline. A task with neither never reaches a window, even one whose tag filter matches it. `task_defaults.yml` sets `Due_Date: {{tomorrow}}`, so tasks made with `new` are covered; tasks written another way are not.
 - **Zero durations.** `generic_handle_new` sets `duration: 0`, and the Brain Dump wizard has no duration field, so its tasks can never be placed. The Home view warns and offers "Give them 30 min"; a default in `task_defaults.yml` or a field in the wizard would fix it at the source.
-- **Template choice.** With several eligible day templates and no status requirements, the first by name wins.
+- **Template choice.** With several eligible day templates and no status requirements, the first by name wins. (2026-11-19: a template whose `days` names today now wins over a general one, and the plan says why; tracker #16, #40.)
 
 ## Other fixes on the branch
 

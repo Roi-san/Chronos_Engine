@@ -2,7 +2,7 @@
 
 For anyone, a person or a new AI session, picking up work on this repository. Ten minutes here saves hours.
 **Coming back to continue the work? Read `docs/NEXT_SESSION.md` first**: where things stand, what to do next in what order, and the biggest obstacles to smooth scheduling.
-Last updated: 2026-11-19 (update this line, and "Where things stand", every work session).
+Last updated: 2026-11-19, late evening (update this line, and "Where things stand", every work session).
 
 ## What Chronos is
 
@@ -56,6 +56,7 @@ Two old pages, `docs/scheduling/scheduling_algorithm_overview.md` and `schedulin
 | `modules/scheduler/kairos_v2.py` | **Kairos v2, the only scheduler that runs** (about 7600 lines; map below). |
 | `modules/scheduler/direction.py` | Goal, commitment and recurring pressure (the signals Kairos scores and Home explains). |
 | `modules/scheduler/periods.py` | **The one shared helper for days and periods** (since 2026-11-19): what day it is, where a day / week / month / quarter / year starts and ends, and on which days something was done (item history, the daily completion logs, lighter versions). Commitments and recurring items both use it. Anything new that needs "today" or "this week" should too. |
+| `modules/scheduler/sleep_blocks.py` | **What counts as sleep** (since 2026-11-19, D5): only a day-template block marked as sleep; names never decide except on a day with no marked block. Kairos and the sleep gate use it. |
 | `modules/scheduler/recurrence.py` | Recurring items (D2): what `frequency` means, each weekly to yearly item's turn (a picked `day:` or spread over the period), and whether it is on today's plan. `docs/scheduling/recurrence_design.md`. |
 | `modules/scheduler/runtime.py` | The day file format and the timer's plan (`build_schedule_plan`). |
 | `modules/scheduler/v1.py` | Template helpers Kairos uses, and the schedule-file editors behind `trim`, `cut`, `shift`, `mark` and friends. |
@@ -80,12 +81,12 @@ There have been three schedulers: an unreachable pre-Kairos one at the bottom of
 | --- | --- | --- |
 | `gather_information`, `model_reality` | Settings, current status, today's completions, manual injections and adjustments | |
 | `model_sleep`, `commit_sleep` | Sleep debt; whether you are inside a sleep block now; the sleep prompt's answer | |
-| `select_week_template`, `derive_week_days`, `select_day_template` | Which day template applies | Template choice: weekday, `prioritize:` preferences, closest status, then name |
+| `select_week_template`, `derive_week_days`, `select_day_template` | Which day template applies | Template choice: weekday, `prioritize:` preferences, closest status, a template naming today's weekday (2026-11-19), then name; why it chose: `schedule.day_template_choice`; sleep blocks: `schedule.sleep_blocks` |
 | `commit_anchor_skeleton` | Anchors (`reschedule: never`) and hard injections | |
 | `model_day_budget` | Where the plan ends (the next bedtime) | `_resolve_next_bedtime`, `PLAN_LAST_MINUTE_OF_DAY` |
 | `build_candidate_universe` | What is in scope today | Goals/commitments push items in (`direction.py`); recurring items are in scope when `recurrence.py` says it is their turn and they are not done this period (`schedule.recurring`); every candidate passes through `_normalize_candidate`, where items without a length get one (`_effective_length`) |
 | `remove_reality_impossible_candidates` | Drops done/skipped items; scales down to today's status | `_scale_down_for_status` |
-| `populate_day_and_windows` and the window phases | Fixed-time slots, windows | `_fill_structure_length`, `_scale_down_fixed_time_nodes` |
+| `populate_day_and_windows` and the window phases | Fixed-time slots, windows | `_fill_structure_length`, `_scale_down_fixed_time_nodes`; an item's own time as a wish, `_place_wished_times` (2026-11-19, `schedule.wished_times`) |
 | `handle_gaps_buffers_and_recovery`, `build_runtime_helper_windows`, `place_remaining_structure` | Gap filling; helper windows for urgent work | `_runtime_helper_settings` (earliest gap) |
 | `run_pressure_relief_pipeline` | Overflow: lighter versions, then trims, then cuts, only where allowed | |
 | `fill_quick_wins`, `finalize_conceptual_schedule` | Final blocks | Breathing room in `_apply_breathing_room` |
@@ -133,3 +134,4 @@ Scoring: `_urgency_bonus` adds due date, deadline, goal, commitment and recurrin
 - 2026-11-19: on `home-hub-fixes`, step 1c (recurring items, D2) committed as `0d0578a` and pushed. Full suite with it: **486 tests, 486 pass** (after midnight; the 2 in `tests/test_timer_anchor_wait.py` fail between 22:30 and midnight, issue 21, a test bug). Any other failure is new.
 - Roadmap phase 1, "nothing silently missing": 1a item lengths (D1), 1b habit tests and 1c recurring items (D2) are done. Next: phase 2, the fresh-install walkthrough (`docs/ROADMAP.md`). The pilot (2026-11-19): small things first, and build so nothing needs rebuilding.
 - Gotchas added on 2026-11-19: the dashboard reports a console command as done whenever it exits normally, even after an error (issue 23), so check the result on disk; Playwright for the browser checks is installed in an old scratchpad (`.../cb8fab29-.../scratchpad/pw/node_modules`; reinstall `playwright-core@1.48.2` if Temp was cleared).
+- 2026-11-19, late evening, on **`usable-chronos`** (`feec244`, `19353dc`, `4ee70d3`, `5566407`, pushed): decisions D5 (sleep by marks, not names), D6 (template choice explained, weekday tie-break) and D7 (an item's own time is a wish) built; onboarding fixed (#32); milestone progress (#41 c, d); issue 21 fixed. **Full suite: 536 passed, 0 failed, at any hour** (the 22:30-midnight failures are gone). Tests can no longer write into the pilot's item mirror (`tests/conftest.py`), but still run them only in a throwaway export. Next: `docs/NEXT_SESSION.md`.

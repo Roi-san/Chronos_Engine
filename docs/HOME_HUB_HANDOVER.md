@@ -87,7 +87,7 @@ Issues found later, and the list of next tasks, are tracked in `docs/ISSUES_AND_
 4. **A missed morning routine is re-queued into the afternoon** as one block. Needs a rule such as "do not re-queue after HH:MM". (#14)
 5. **Routines show as one block.** The Timer and Home say "Morning Routine", not the current step. Laying the steps out inside the routine's slot would fix both. (#15)
 6. **Field-name decision.** The prototype makes Kairos accept what the builders write. The alternative is to make the builders write `start_time` / `end_time`. Both are reasonable; it should be one or the other.
-7. **Day template choice.** With several templates and no status requirements, the first by name wins. (#16)
+7. **Day template choice.** With several templates and no status requirements, the first by name wins. (#16) *(2026-11-19, on `usable-chronos`: a template whose `days` names today now beats a general one, and Kairos records and Home shows why. Also new there: sleep is decided by marks on a day-template block, never by a name (`modules/scheduler/sleep_blocks.py`), and an item's own `start_time` is a wish (`_place_wished_times`). Details: `docs/scheduling/planning_and_tracking_model.md`.)*
 8. ~~**Three tests already fail upstream:** console plugins, timer break-as-buffer, and the TRICK debug-console registry.~~ All three fixed on these branches (see Testing). The timer one was hiding a real bug: authored break blocks were run as work.
 
 ### Not tested
