@@ -1,3 +1,4 @@
+import copy
 import os
 import yaml
 from datetime import datetime, timedelta
@@ -55,32 +56,74 @@ def evaluate_and_update_milestones():
         if not isinstance(m, dict):
             continue
         name = m.get('name') or 'Milestone'
-        computed = _compute_progress(m)
-        if not computed:
+        # One milestone that cannot be evaluated must not stop the others (issue 41c:
+        # before, the loop died on the first error and the caller swallowed it, so
+        # no milestone ever updated again).
+        try:
+            changed = _evaluate_milestone(m, name)
+        except Exception as exc:
+            print(f"Warning: milestone '{name}' could not be evaluated: {exc}")
             continue
-        changed = False
-        if m.get('progress') != computed['progress']:
-            m['progress'] = computed['progress']
-            changed = True
-        # Completion handling
-        if computed['progress']['percent'] >= 100 and str(m.get('status','')).lower() != 'completed':
-            m['status'] = 'completed'
-            m['completed'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            changed = True
-            _fire_triggers(m)
-            try:
-                from utilities import points as Points
-                if not m.get('points_awarded'):
-                    Points.award_on_complete('milestone', name, minutes=None)
-                    m['points_awarded'] = True
-            except Exception:
-                pass
-        # Move into in-progress if >0 and not finished
-        if 0 < computed['progress']['percent'] < 100 and str(m.get('status','')).lower() == 'pending':
-            m['status'] = 'in-progress'
-            changed = True
         if changed:
             write_item_data('milestone', name, m)
+
+
+def settle_progress(m: dict) -> bool:
+    """
+    Keep a milestone's stored percent in line with its status (issue 41d).
+
+    Every goal percentage (`track goal`, the Goal Tracker, the dashboard's goal
+    lists) is computed from the milestones' stored `progress.percent`, so a
+    milestone completed by hand must say 100, and one put back to pending that
+    nothing can count (no `criteria` Chronos understands) goes back to 0.
+    Returns True when it changed `m`.
+    """
+    if not isinstance(m, dict):
+        return False
+    progress = m.get('progress') if isinstance(m.get('progress'), dict) else {}
+    try:
+        percent = float(progress.get('percent') or 0)
+    except (TypeError, ValueError):
+        percent = 0.0
+    status = str(m.get('status') or '').strip().lower()
+    if status == 'completed':
+        target = 100
+    elif percent >= 100 and _compute_progress(m) is None:
+        target = 0
+    else:
+        return False
+    if percent == target and isinstance(m.get('progress'), dict):
+        return False
+    m['progress'] = {**progress, 'percent': target}
+    return True
+
+
+def _evaluate_milestone(m: dict, name: str) -> bool:
+    """Recompute one milestone in place; True when it changed."""
+    before = copy.deepcopy(m)
+    computed = _compute_progress(m)
+    if not computed:
+        return settle_progress(m)
+    if m.get('progress') != computed['progress']:
+        m['progress'] = computed['progress']
+    # Completion handling
+    if computed['progress']['percent'] >= 100 and str(m.get('status','')).lower() != 'completed':
+        m['status'] = 'completed'
+        m['completed'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        _fire_triggers(m)
+        try:
+            from utilities import points as Points
+            if not m.get('points_awarded'):
+                Points.award_on_complete('milestone', name, minutes=None)
+                m['points_awarded'] = True
+        except Exception:
+            pass
+    # Move into in-progress if >0 and not finished
+    if 0 < computed['progress']['percent'] < 100 and str(m.get('status','')).lower() == 'pending':
+        m['status'] = 'in-progress'
+    # Completed by hand before the count got there: still 100% (issue 41d).
+    settle_progress(m)
+    return m != before
 
 
 def _track_milestone(milestone_name: str):
@@ -116,6 +159,11 @@ def _update_milestone(name: str, updates: dict):
 
 def _compute_progress(m: dict):
     criteria = m.get('criteria') or {}
+    # Goal Planning saves the success measure as text ("Run 5k without stopping").
+    # Text is not countable: before (issue 41c) `'count' in criteria` was a substring
+    # test on it and the next line indexed the string (TypeError).
+    if not isinstance(criteria, dict):
+        return None
     # Support legacy shapes
     if 'count' in criteria:
         return _progress_count(criteria['count'], m)

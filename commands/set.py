@@ -167,6 +167,14 @@ def run(args, properties):
 
     # Default path for other item types
     data.update(item_properties_to_set)
+    if item_type == 'milestone':
+        # The Milestones widget's Complete button runs `set milestone ... status:completed`;
+        # completed means 100%, or goal percentages ignore it (issue 41d).
+        try:
+            from modules.milestone import main as MilestoneModule  # type: ignore
+            MilestoneModule.settle_progress(data)
+        except Exception:
+            pass
     write_item_data(item_type, item_name, data)
     print(f"✅. Properties of {item_type} '{item_name}' updated.")
 
