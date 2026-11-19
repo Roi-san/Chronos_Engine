@@ -54,6 +54,7 @@ from . import direction as Direction
 from . import recurrence as Recurrence
 from .sleep_gate import get_active_sleep_block, normalize_sleep_policy
 from .v1 import (
+    UNREADABLE_FILES,
     USER_DIR,
     is_template_eligible_for_day,
     list_all_day_templates,
@@ -167,6 +168,8 @@ class KairosV2Scheduler:
         strongly structured snapshot of what Kairos v2 currently knows after the
         first committed phases.
         """
+        # Files this run cannot read are skipped and reported, not fatal (issue 31).
+        UNREADABLE_FILES.clear()
         now = self._resolve_now()
         run_date = target_date or now.date()
         state = KairosV2RunState(target_date=run_date, now=now)
@@ -201,6 +204,7 @@ class KairosV2Scheduler:
         self.fill_quick_wins(state)
         self.finalize_conceptual_schedule(state)
         self.build_timer_handoff(state)
+        self._record_unreadable_files(state)
         self.persist_decision_log_artifact(state)
 
         return {
@@ -4344,6 +4348,31 @@ class KairosV2Scheduler:
         if info["rhythm"] in ("daily", "weekdays"):
             return bool(Recurrence.evaluate(info, target_date, ()).get("due"))
         return False
+
+    def _record_unreadable_files(self, state: KairosV2RunState) -> None:
+        """
+        Files skipped this run because they could not be read (issue 31).
+
+        Before, one item, day template or status file with a YAML mistake made the
+        whole plan fail. Now it is skipped (`v1.read_template` returns None) and
+        listed here, in the decision log and in the console, so it is not silently
+        missing: `schedule.unreadable_files` = [{file, error}], with `file` relative
+        to the user folder when it is inside it.
+        """
+        rows = []
+        for path, error in sorted(UNREADABLE_FILES.items()):
+            try:
+                rel = os.path.relpath(path, USER_DIR)
+                shown = path if rel.startswith("..") else rel.replace("\\", "/")
+            except ValueError:
+                shown = path
+            rows.append({"file": shown, "error": error})
+        state.schedule["unreadable_files"] = rows
+        state.phase_notes["unreadable_files"] = [f"{row['file']}: {row['error']}" for row in rows]
+        if rows:
+            print(f"[Kairos] Skipped {len(rows)} file(s) it could not read; the rest of the day was planned:")
+            for row in rows:
+                print(f"  - {row['file']}: {row['error']}")
 
     def _recurring_record(self, recurring: Dict[str, Any], fallback: List[str]) -> Dict[str, Any]:
         """

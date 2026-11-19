@@ -128,14 +128,34 @@ def is_template_eligible_for_day(template, day_of_week):
     return True
 
 
+# Files read_template could not read (path -> short reason), filled as they are met.
+# Kairos clears it at the start of a run and reports it in `schedule.unreadable_files`
+# (issue 31: before, one file with a YAML mistake made the whole plan fail).
+UNREADABLE_FILES = {}
+
+
 def read_template(template_path):
     """
     Reads a YAML template file.
+
+    A file that cannot be read (a YAML mistake, bytes that are not text) gives
+    None, like a missing file, and is noted in UNREADABLE_FILES, so one bad
+    item file no longer stops the whole plan. Every caller already treats
+    None as "nothing here".
     """
     if not os.path.exists(template_path):
         return None
-    with open(template_path, 'r') as f:
-        return yaml.safe_load(f)
+    try:
+        with open(template_path, 'r') as f:
+            return yaml.safe_load(f)
+    except (yaml.YAMLError, UnicodeDecodeError, OSError) as exc:
+        reason = " ".join(str(exc).split())
+        mark = getattr(exc, "problem_mark", None)
+        if mark is not None:
+            problem = getattr(exc, "problem", None) or reason
+            reason = f"line {mark.line + 1}, column {mark.column + 1}: {problem}"
+        UNREADABLE_FILES[os.path.abspath(template_path)] = reason[:200]
+        return None
 
 def normalize_template_times(node):
     """
