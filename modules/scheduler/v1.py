@@ -110,7 +110,11 @@ def is_template_eligible_for_day(template, day_of_week):
     if days_prop is not None:
         # Explicit days property - check if current day is in list
         if isinstance(days_prop, list):
-            normalized_days = [d.lower().strip() for d in days_prop]
+            normalized_days = [str(d).lower().strip() for d in days_prop if str(d or "").strip()]
+            # An empty list is documented as "any day" (below), but used to match no
+            # day at all; fixed 2026-11-19 (issue 40).
+            if not normalized_days:
+                return True
             return day_of_week.lower() in normalized_days
         elif isinstance(days_prop, str):
             return day_of_week.lower() == days_prop.lower().strip()

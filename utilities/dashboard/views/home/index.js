@@ -582,9 +582,15 @@ export function mount(el, context) {
         tag || h('span'),
       ));
     });
+    // Which day template Kairos used and why (D6), and anything it did that would
+    // otherwise be silent (sleep found by name, files it could not read).
+    const tpl = s.today?.day_template;
+    const notes = s.today?.plan_notes || [];
     return h('section', { class: 'home-card' },
       h('h2', { class: 'home-card-title' }, 'Today',
         h('button', { class: 'home-link', text: 'Open full schedule', onclick: () => openView('schedule', 'Schedule') })),
+      tpl && tpl.name && h('p', { class: 'home-sub home-day-template', text: `Day template: ${tpl.name} (${tpl.why}).` }),
+      ...notes.map((text) => h('p', { class: 'home-note home-plan-note', text })),
       list,
     );
   }

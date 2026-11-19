@@ -199,6 +199,39 @@ def length_notes(record):
     return out
 
 
+def day_template_line(meta):
+    """
+    Which day template today's plan used and why, for Home (decision D6,
+    2026-11-19): {"name", "why"}, or None for a plan without that record.
+    """
+    choice = meta.get("day_template_choice") if isinstance(meta, dict) else None
+    if not isinstance(choice, dict) or "why" not in choice:
+        return None
+    return {"name": choice.get("name"), "why": str(choice.get("why") or "")}
+
+
+def plan_notes(meta):
+    """
+    Things Kairos did that would otherwise only be in the schedule file: sleep
+    found by a block's name (D5), an own time that could not be kept (D7), and
+    files it could not read (issue 31).
+    """
+    notes = []
+    if not isinstance(meta, dict):
+        return notes
+    sleep = meta.get("sleep_blocks")
+    if isinstance(sleep, dict) and sleep.get("by_name") and sleep.get("note"):
+        notes.append(str(sleep["note"]))
+    # An item's own time is a wish (D7): when it could not be kept, say why.
+    for row in meta.get("wished_times") or []:
+        if isinstance(row, dict) and not row.get("placed") and row.get("name"):
+            notes.append(f"{row['name']} wanted {row.get('wished')}, but {row.get('why')}, so Chronos planned it in free time instead.")
+    for row in meta.get("unreadable_files") or []:
+        if isinstance(row, dict) and row.get("file"):
+            notes.append(f"Skipped {row['file']}: Chronos could not read it ({row.get('error') or 'unknown error'}). Fix or remove the file.")
+    return notes
+
+
 def _default_item_minutes():
     """The length Kairos gives an item without one (scheduling_settings.yml), as Home shows it."""
     data = _read_yaml(_settings_file("scheduling_settings.yml") or "") or {}
@@ -316,6 +349,8 @@ def _today():
         out["length_notes"] = length_notes(meta.get("assumed_lengths") if isinstance(meta, dict) else None)
     except Exception:
         out["length_notes"] = length_notes(None)
+    out["day_template"] = day_template_line(meta)
+    out["plan_notes"] = plan_notes(meta)
 
     def walk(items, depth, group=""):
         for item in items or []:

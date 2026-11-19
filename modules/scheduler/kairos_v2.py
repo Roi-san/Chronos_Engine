@@ -52,6 +52,7 @@ import yaml
 
 from . import direction as Direction
 from . import recurrence as Recurrence
+from . import sleep_blocks as SleepBlocks
 from .sleep_gate import get_active_sleep_block, normalize_sleep_policy
 from .v1 import (
     UNREADABLE_FILES,
@@ -481,21 +482,31 @@ class KairosV2Scheduler:
             candidate["status_alignment"] = score
             scored_templates.append(candidate)
 
+        def selection_key(item: Dict[str, Any]) -> Tuple[Any, ...]:
+            # Order of what decides (decision D6, 2026-11-19): the Today widget's
+            # preferences, closeness to how you feel, how many status needs it
+            # matches, then a template set for today's weekday before a general one
+            # (new: "Weekend" used to lose to "Normal Day" on Saturday, issue 40),
+            # then the name.
+            return (
+                -item.get("property_preference", {}).get("score", 0.0),
+                item.get("status_alignment", {}).get("weighted_distance", 10**9),
+                -item.get("status_alignment", {}).get("matched_dimensions", 0),
+                0 if self._template_names_weekday(item.get("template"), weekday_name) else 1,
+                item.get("name", ""),
+            )
+
         if forced:
             chosen = self._match_scored_template(forced, scored_templates) or forced
             selection_reason = "forced_template"
         else:
-            scored_templates.sort(
-                key=lambda item: (
-                    -item.get("property_preference", {}).get("score", 0.0),
-                    item.get("status_alignment", {}).get("weighted_distance", 10**9),
-                    -item.get("status_alignment", {}).get("matched_dimensions", 0),
-                    item.get("name", ""),
-                )
-            )
+            scored_templates.sort(key=selection_key)
             chosen = scored_templates[0] if scored_templates else None
             templates = scored_templates
             selection_reason = "status_alignment_closest_match"
+        state.schedule["day_template_choice"] = self._explain_template_choice(
+            chosen, scored_templates, bool(forced), weekday_name, state, selection_key
+        )
 
         candidate_summary = self._summarize_template_candidates(scored_templates, include_status=True)
         state.schedule["day_template"] = chosen
@@ -527,6 +538,86 @@ class KairosV2Scheduler:
                 f"Top candidates: {self._format_template_candidate_summary(candidate_summary)}."
             ),
         )
+        self._record_sleep_blocks(state, chosen)
+
+    def _template_names_weekday(self, template: Any, weekday_name: str) -> bool:
+        """Whether a template's `days` names this weekday (not just "any day")."""
+        days = (template or {}).get("days") if isinstance(template, dict) else None
+        if isinstance(days, str):
+            days = [days]
+        if not isinstance(days, list):
+            return False
+        return str(weekday_name or "").strip().lower() in {str(d or "").strip().lower() for d in days}
+
+    def _explain_template_choice(
+        self,
+        chosen: Any,
+        scored: List[Dict[str, Any]],
+        forced: bool,
+        weekday_name: str,
+        state: KairosV2RunState,
+        selection_key: Any,
+    ) -> Dict[str, Any]:
+        """
+        Why today's template was chosen, in words for Home (decision D6). `reason`
+        is what decided it: chosen, only, preference, status, weekday, name, none.
+        """
+        weekday = str(weekday_name or "").strip().capitalize()
+        if not isinstance(chosen, dict):
+            return {"name": None, "reason": "none", "why": f"you have no day template for {weekday}"}
+        name = str(chosen.get("name") or "")
+        if forced:
+            return {"name": name, "reason": "chosen", "why": "you chose it for today"}
+        if len(scored) < 2:
+            return {"name": name, "reason": "only", "why": f"it is the only day template for {weekday}"}
+        mine, theirs = selection_key(scored[0]), selection_key(scored[1])
+        decided = next((index for index, (a, b) in enumerate(zip(mine, theirs)) if a != b), len(mine) - 1)
+        if decided == 0:
+            return {"name": name, "reason": "preference", "why": "it matches the Today widget's preferences best"}
+        if decided in (1, 2):
+            needs = (chosen.get("template") or {}).get("status_requirements") or {}
+            current = state.reality.get("current_status", {}) or {}
+            if isinstance(needs, dict) and needs:
+                feel = ", ".join(f"{dim} {str(current.get(dim) or '?').lower()}" for dim in needs)
+                return {"name": name, "reason": "status", "why": f"it fits how you feel ({feel})"}
+            return {
+                "name": name,
+                "reason": "status",
+                "why": f"the templates for other states ({scored[1].get('name')}) do not fit how you feel now",
+            }
+        if decided == 3:
+            return {"name": name, "reason": "weekday", "why": f"it is set for {weekday}s"}
+        tied = sum(1 for item in scored if selection_key(item)[:4] == mine[:4])
+        return {
+            "name": name,
+            "reason": "name",
+            "why": (
+                f"{tied} templates fit today equally, so the first by name was taken; "
+                "give them days or status requirements to choose between them"
+            ),
+        }
+
+    def _record_sleep_blocks(self, state: KairosV2RunState, chosen: Any) -> None:
+        """
+        Which blocks of today's template are sleep, and whether a name decided it
+        (decision D5, sleep_blocks.py). Recorded in `schedule.sleep_blocks` so the
+        fallback for an unmarked template is never silent.
+        """
+        template = chosen.get("template") if isinstance(chosen, dict) else None
+        children = (template or {}).get("children") or []
+        blocks = SleepBlocks.template_sleep_blocks(children)
+        by_name = SleepBlocks.uses_name_fallback(children)
+        names = [str(block.get("name") or "").strip() for block in blocks]
+        note = None
+        if by_name:
+            template_name = str((chosen or {}).get("name") or "today's template")
+            note = (
+                f"No block on '{template_name}' is marked as sleep, so "
+                f"{', '.join(repr(n) for n in names)} counted as your sleep because of the name. "
+                "Mark it as sleep (category: sleep) in the Day Builder to make it explicit."
+            )
+            self._record_commit(state, phase="select_day_template", title="Sleep found by name", body=note)
+        state.schedule["sleep_blocks"] = {"names": names, "by_name": by_name, "note": note}
 
     def ensure_week_context(self, state: KairosV2RunState) -> None:
         """
@@ -703,10 +794,13 @@ class KairosV2Scheduler:
         authored_anchors: List[Dict[str, Any]] = []
         active_anchors: List[Dict[str, Any]] = []
 
-        for node in self._walk_nodes((template or {}).get("children") or []):
+        template_children = (template or {}).get("children") or []
+        for node in self._walk_nodes(template_children):
             if not self._is_hard_anchor(node):
                 continue
-            if self._is_sleep_like_node(node):
+            # Sleep is committed by the sleep phases; which blocks are sleep is one
+            # rule for all of Chronos (sleep_blocks.py, decision D5).
+            if SleepBlocks.is_sleep_block_of(node, template_children):
                 continue
             normalized = self._normalize_anchor(node, state.target_date)
             authored_anchors.append(normalized)
@@ -908,6 +1002,8 @@ class KairosV2Scheduler:
                 continue
             if self._is_hard_anchor(node):
                 continue
+            if SleepBlocks.is_sleep_block_of(node, (template or {}).get("children") or []):
+                continue
             effective_node = self._build_effective_template_child_node(template or {}, node)
             if (
                 bool(effective_node.get("window"))
@@ -941,7 +1037,7 @@ class KairosV2Scheduler:
                 continue
             if self._is_hard_anchor(item):
                 continue
-            if self._is_sleep_like_node(item):
+            if SleepBlocks.is_marked_sleep_block(item):
                 continue
             if self._is_explicit_free_node(item) or self._is_explicit_buffer_node(item):
                 continue
@@ -1697,6 +1793,20 @@ class KairosV2Scheduler:
             if isinstance(state.schedule.get("reality_filtered_candidates"), dict)
             else []
         )
+        # An item's own time is a wish (decision D7, 2026-11-19): kept when the time
+        # is free, else the item is planned like any other and the plan says why.
+        # Accepted wishes join the fixed-time slots, so everything after this
+        # (covered-by-structure, gaps, breathing room, conceptual blocks) treats
+        # them like a timed block of the day template.
+        wished_nodes, wished_record = self._place_wished_times(
+            state, viable_candidates, active_fixed_time_nodes, expanded_nodes
+        )
+        if wished_nodes:
+            active_fixed_time_nodes = sorted(
+                list(active_fixed_time_nodes) + wished_nodes,
+                key=lambda node: (int(node.get("start_minutes") or 0), int(node.get("end_minutes") or 0)),
+            )
+        state.schedule["wished_times"] = wished_record
         # A routine that is placed as one block already contains its members, and a
         # block with a fixed slot must not also be offered to windows or gap fill.
         # Without this the same habit shows up inside its routine and again on its own.
@@ -4095,14 +4205,25 @@ class KairosV2Scheduler:
 
     def _looks_like_sleep_entry(self, entry: Dict[str, Any]) -> bool:
         """
-        Heuristic for whether a completion entry is sleep-related.
+        Whether a completion entry records sleep (sleep_blocks.is_sleep_log_entry):
+        a sleep mark, or the name of a sleep block in the user's day templates.
+        Before D5 (2026-11-19) any name containing "sleep" or "bedtime" counted, so
+        a finished "Bedtime Routine" was added to last night's sleep.
         """
-        if entry.get("sleep") is True:
-            return True
-        category = str(entry.get("category") or "").strip().lower()
-        name = str(entry.get("name") or entry.get("item_name") or "").strip().lower()
-        tags = [str(tag or "").strip().lower() for tag in (entry.get("tags") or [])]
-        return category == "sleep" or "sleep" in tags or "sleep" in name or "bedtime" in name
+        return SleepBlocks.is_sleep_log_entry(entry, self._sleep_block_names())
+
+    def _sleep_block_names(self) -> List[str]:
+        """Names of the sleep blocks in all day templates (read once per run)."""
+        cached = getattr(self, "_sleep_block_names_cache", None)
+        if cached is None:
+            names: List[str] = []
+            for path in list_all_day_templates():
+                template = read_template(path)
+                if isinstance(template, dict):
+                    names.extend(str(node.get("name") or "") for node in SleepBlocks.template_sleep_blocks(template.get("children") or []))
+            cached = [name for name in names if name.strip()]
+            self._sleep_block_names_cache = cached
+        return cached
 
     def _derive_recovery_pressure(self, raw_sleep_debt_minutes: int, history: List[Dict[str, Any]]) -> str:
         """
@@ -4215,6 +4336,8 @@ class KairosV2Scheduler:
             "status_grace": node.get("status_grace"),
             "mini_of": node.get("mini_of"),
             "mini_variant": node.get("mini_variant"),
+            # The item's own time, a wish (decision D7): see _place_wished_times.
+            "wished_time": (str(node.get("start_time") or "").strip() or None),
             "source": source,
             "reasons": reasons,
             "source_path": source_path,
@@ -4269,7 +4392,7 @@ class KairosV2Scheduler:
         end = self._parse_hm(node.get("end_time"))
         if start is not None and end is not None and end > start:
             return end - start, "own"
-        if self._is_sleep_like_node(node):
+        if SleepBlocks.is_marked_sleep_block(node) or SleepBlocks.is_named_sleep_block(node):
             return None, None
         node_type = str(node.get("type") or "").strip().lower()
         if node_type in LENGTH_CONTAINER_TYPES:
@@ -5291,6 +5414,78 @@ class KairosV2Scheduler:
             normalized["top_level_parent_type"] = normalized.get("_top_level_parent_type")
             fixed_nodes.append(normalized)
         return fixed_nodes
+
+    def _place_wished_times(
+        self,
+        state: KairosV2RunState,
+        candidates: List[Dict[str, Any]],
+        fixed_nodes: List[Dict[str, Any]],
+        expanded_nodes: List[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Items with their own time (decision D7; docs/scheduling/planning_and_tracking_model.md, proposal C).
+
+        Only library items in today's plan (`global_candidate_rules`): the day
+        template's own timed blocks are already fixed slots. A wish is kept when
+        its whole length is free of anchors, timed blocks, windows and earlier
+        kept wishes, has not started yet, and ends before bedtime; candidates are
+        taken in their current order, so the first of two wishes for one time
+        wins. Returns (fixed-time nodes for the kept wishes, one record row per
+        item with a time: name, wished, placed, why).
+        """
+        floor = self._runtime_floor_minutes(state)
+        boundary = (state.schedule.get("day_budget") or {}).get("sleep_boundary_minutes")
+        busy: List[Tuple[int, int, str]] = []
+        for anchor in (state.schedule.get("anchor_skeleton") or {}).get("anchors") or []:
+            start, length = anchor.get("start_minutes"), anchor.get("duration_minutes")
+            if start is not None and length is not None:
+                busy.append((int(start), int(start) + int(length), str(anchor.get("name") or "a fixed block")))
+        for node in fixed_nodes:
+            if node.get("start_minutes") is not None and node.get("end_minutes") is not None:
+                busy.append((int(node["start_minutes"]), int(node["end_minutes"]), str(node.get("name") or "a timed block")))
+        for window in self._discover_windows_in_structure(expanded_nodes):
+            start = self._surface_start_minutes(window)
+            end = self._surface_end_minutes(window, duration_keys=("duration", "duration_minutes"))
+            if start is not None and end is not None:
+                busy.append((int(start), int(end), f"the {window.get('name') or 'window'} window"))
+        fixed_identities = {str(node.get("identity") or "").strip() for node in fixed_nodes}
+
+        kept: List[Dict[str, Any]] = []
+        record: List[Dict[str, Any]] = []
+        for candidate in candidates:
+            if candidate.get("source") != "global_candidate_rules":
+                continue
+            start = self._parse_hm(candidate.get("wished_time"))
+            if start is None:
+                continue
+            identity = str(candidate.get("identity") or "").strip()
+            if identity in fixed_identities:
+                continue
+            length = self._coerce_minutes(candidate.get("duration")) or 0
+            if length <= 0:
+                continue
+            end = start + length
+            row = {"name": candidate.get("name"), "identity": identity, "wished": self._minutes_to_hm(start), "placed": False}
+            clash = next((label for (b_start, b_end, label) in busy if b_start < end and b_end > start), None)
+            if start < floor:
+                row["why"] = f"{row['wished']} has passed"
+            elif boundary is not None and end > int(boundary):
+                row["why"] = f"it would run into bedtime ({self._minutes_to_hm(int(boundary))})"
+            elif clash:
+                row["why"] = f"{clash} is at that time"
+            else:
+                node = dict(candidate)
+                node.update({"start_time": self._minutes_to_hm(start), "end_time": self._minutes_to_hm(end), "duration": length})
+                normalized = self._discover_fixed_time_structure_nodes([node])
+                if normalized:
+                    kept.append(normalized[0])
+                    busy.append((start, end, str(candidate.get("name") or "another item")))
+                    row["placed"] = True
+                    row["why"] = "the time was free"
+                else:
+                    row["why"] = "it could not be given a slot"
+            record.append(row)
+        return kept, record
 
     def _identities_covered_by_structure(
         self,
@@ -7275,17 +7470,6 @@ class KairosV2Scheduler:
         """
         return str(node.get("reschedule") or "").strip().lower() == "never"
 
-    def _is_sleep_like_node(self, node: Dict[str, Any]) -> bool:
-        """
-        Detect whether an anchor belongs to the sleep system.
-        """
-        if node.get("sleep") is True:
-            return True
-        category = str(node.get("category") or "").strip().lower()
-        name = str(node.get("name") or "").strip().lower()
-        tags = [str(tag or "").strip().lower() for tag in (node.get("tags") or [])]
-        return category == "sleep" or "sleep" in tags or "sleep" in name or "bedtime" in name
-
     def _normalize_anchor(self, node: Dict[str, Any], anchor_date: date) -> Dict[str, Any]:
         """
         Normalize a hard anchor into a scheduler-facing structure.
@@ -7371,11 +7555,10 @@ class KairosV2Scheduler:
         Every sleep anchor in the chosen template, ordered by clock start.
         """
         sleep_anchors: List[Dict[str, Any]] = []
-        for node in self._walk_nodes(template.get("children") or []):
-            if not self._is_hard_anchor(node):
-                continue
-            if not self._is_sleep_like_node(node):
-                continue
+        # Before D5 (2026-11-19) this took hard anchors whose name or marks looked
+        # like sleep: a "Bedtime Routine" anchored at 22:30 ended the day, and the
+        # Sleep Settings widget's blocks (no `reschedule: never`) were never sleep.
+        for node in SleepBlocks.template_sleep_blocks(template.get("children") or []):
             sleep_anchors.append(self._normalize_anchor(node, anchor_date))
 
         sleep_anchors.sort(

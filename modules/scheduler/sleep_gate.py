@@ -1,6 +1,7 @@
 import os
 from datetime import datetime, timedelta
 
+from . import sleep_blocks as SleepBlocks
 from .v1 import USER_DIR, is_template_eligible_for_day, list_all_day_templates, prepare_day_template, read_template
 
 
@@ -71,34 +72,20 @@ def _duration_minutes(node):
 
 
 def _is_sleep_anchor(node):
-    if not isinstance(node, dict):
-        return False
-    tags = {str(tag or "").strip().lower() for tag in (node.get("tags") or []) if str(tag or "").strip()}
-    category = str(node.get("category") or "").strip().lower()
-    subtype = str(node.get("subtype") or "").strip().lower()
-    name = str(node.get("name") or "").strip().lower()
-    sleep_flag = bool(node.get("sleep"))
-    anchored = subtype == "anchor" or str(node.get("reschedule") or "").strip().lower() == "never" or bool(node.get("essential"))
-    if sleep_flag:
-        return True
-    if "sleep" in tags and anchored:
-        return True
-    if category == "sleep" and anchored:
-        return True
-    return anchored and any(hint in name for hint in ("sleep", "bedtime"))
+    """
+    A block that can be sleep on its own (marked, or the named fallback shape).
+    Which blocks of a template are sleep is decided per template by
+    `sleep_blocks.template_sleep_blocks` (decision D5, 2026-11-19); before, any
+    fixed item named "...sleep..." or "...bedtime..." or with any sleep mark
+    counted, so an anchored "Bedtime Routine" made Chronos ask the sleep question.
+    """
+    return SleepBlocks.is_marked_sleep_block(node) or SleepBlocks.is_named_sleep_block(node)
 
 
 def _walk_sleep_anchors(node):
-    found = []
-    if isinstance(node, dict):
-        if _is_sleep_anchor(node):
-            found.append(node)
-        for child in (node.get("children") or []):
-            found.extend(_walk_sleep_anchors(child))
-    elif isinstance(node, list):
-        for child in node:
-            found.extend(_walk_sleep_anchors(child))
-    return found
+    """The sleep blocks of a template's children (one rule: sleep_blocks.py)."""
+    children = node if isinstance(node, list) else [node]
+    return SleepBlocks.template_sleep_blocks(children)
 
 
 def _eligible_templates_for_date(target_dt):
