@@ -294,9 +294,13 @@ export function mount(el, context) {
     return { note: { text: `Day planned: ${count} block${count === 1 ? '' : 's'}.`, tone: 'ok' } };
   });
 
-  const markBlock = (block, status) => act(status === 'completed' ? 'Marking done' : 'Skipping', async () => {
-    const result = await postJSON('/api/cli', { command: 'mark', args: [`${block.name}:${status}`], properties: {} });
+  // `turnPeriod` set: "Skip this week" (D9): the turn is handled for the whole
+  // period (mark ... skip:period); otherwise Skip means "not today".
+  const markBlock = (block, status, turnPeriod = '') => act(status === 'completed' ? 'Marking done' : 'Skipping', async () => {
+    const properties = turnPeriod ? { skip: 'period' } : {};
+    const result = await postJSON('/api/cli', { command: 'mark', args: [`${block.name}:${status}`], properties });
     if (!result.ok) return { note: { text: `Could not update "${block.name}".`, tone: 'error' } };
+    if (turnPeriod) return { note: { text: `Skipped for this ${turnPeriod}: ${block.name}. It is back next ${turnPeriod}.`, tone: 'ok' } };
     return { note: { text: status === 'completed' ? `Done: ${block.name}` : `Skipped: ${block.name}`, tone: 'ok' } };
   });
 
@@ -367,6 +371,9 @@ export function mount(el, context) {
       due: form.due_date?.value || '',
       priority: form.priority?.value || '',
       times: Number(form.times?.value || 0),
+      when: form.when?.value || '',
+      atTime: form.at_time?.value || '',
+      frequency: form.frequency?.value || '',
       period: form.period?.value || 'week',
       target: form.target?.value || '',
     };
@@ -389,7 +396,12 @@ export function mount(el, context) {
       if (['task', 'habit'].includes(type)) {
         if (extra.goal) properties.goal = extra.goal;
         if (extra.miniOf) properties.mini_of = extra.miniOf;
+        // When (decisions D7, D8): a wish Kairos keeps when there is room.
+        if (extra.when === 'at' && extra.atTime) properties.start_time = extra.atTime;
+        else if (extra.when && extra.when !== 'at') properties.when = extra.when;
       }
+      // How often (D2). Empty = no rhythm of its own: only a goal or commitment brings it in.
+      if (type === 'habit' && extra.frequency) properties.frequency = extra.frequency === 'none' ? '' : extra.frequency;
       if (type === 'commitment') {
         const [targetType, ...rest] = extra.target.split(':');
         properties.status = 'active';
@@ -524,13 +536,19 @@ export function mount(el, context) {
     );
     const why = blockReasons(s, block);
     if (why.length) card.append(h('ul', { class: 'home-why' }, why.map((text) => h('li', { text }))));
+    const turnPeriod = (s.today?.turn_periods || {})[String(block.name || '').trim().toLowerCase()] || '';
     if (running) {
       const pct = Math.min(100, Math.max(0, ((now - start) / Math.max(1, end - start)) * 100));
       card.append(h('div', { class: 'home-progress' }, h('i', { style: `width:${pct.toFixed(1)}%` })));
     }
     card.append(h('div', { class: 'home-now-actions' },
       h('button', { class: 'home-btn primary', text: 'Done', disabled: state.busy, onclick: () => markBlock(block, 'completed') }),
-      h('button', { class: 'home-btn', text: 'Skip', disabled: state.busy, onclick: () => markBlock(block, 'skipped') }),
+      h('button', { class: 'home-btn', text: 'Skip', title: 'Not today: it comes back tomorrow.', disabled: state.busy, onclick: () => markBlock(block, 'skipped') }),
+      turnPeriod && h('button', {
+        class: 'home-btn', text: `Skip this ${turnPeriod}`, disabled: state.busy,
+        title: `Not this ${turnPeriod}: it comes back on its next turn, with no extra push. It does not count as done.`,
+        onclick: () => markBlock(block, 'skipped', turnPeriod),
+      }),
       canWidget('Timer') && h('button', { class: 'home-btn', text: 'Start timer', disabled: state.busy, onclick: startDay }),
       h('button', { class: 'home-btn ghost', text: 'Re-plan from now', disabled: state.busy, onclick: planDay }),
     ));
@@ -656,6 +674,9 @@ export function mount(el, context) {
     form.querySelectorAll('.home-capture-more label').forEach((label) => {
       label.hidden = !(label.getAttribute('data-for') || '').split(' ').includes(type);
     });
+    // The clock field only for "At a time…".
+    const at = form.querySelector('[data-when="at"]');
+    if (at && form.when?.value !== 'at') at.hidden = true;
   }
 
   function renderCapture(s) {
@@ -681,6 +702,16 @@ export function mount(el, context) {
         h('label', { 'data-for': 'task habit', title: 'On a day when the full version does not fit your energy or health, Chronos schedules this one instead, and it still counts.' }, 'Lighter version of',
           h('select', { class: 'home-select', name: 'mini_of' }, h('option', { value: '', text: '(none)' }),
             doable.map((d) => h('option', { value: d.name, text: d.name })))),
+        h('label', { 'data-for': 'habit', title: 'How often it comes back on its own. Once a week or less often: it shows up until done, spread over the period.' }, 'How often',
+          h('select', { class: 'home-select', name: 'frequency' },
+            [['daily', 'Every day'], ['weekly', 'Once a week'], ['monthly', 'Once a month'], ['quarterly', 'Once a quarter'], ['yearly', 'Once a year'], ['none', 'Only when a goal or commitment asks']]
+              .map(([value, label]) => h('option', { value, text: label, selected: value === 'daily' })))),
+        h('label', { 'data-for': 'task habit', title: 'A wish: Chronos keeps it when there is room, otherwise it plans it in free time and says why.' }, 'When',
+          h('select', { class: 'home-select', name: 'when', onchange: () => syncCaptureFields(form) },
+            [['', 'Any time'], ['morning', 'Morning'], ['afternoon', 'Afternoon'], ['evening', 'Evening'], ['before bed', 'Before bed'], ['at', 'At a time…']]
+              .map(([value, label]) => h('option', { value, text: label })))),
+        h('label', { 'data-for': 'task habit', 'data-when': 'at' }, 'At',
+          h('input', { class: 'home-input', type: 'time', name: 'at_time' })),
         h('label', { 'data-for': 'goal' }, 'Target date',
           h('input', { class: 'home-input', type: 'date', name: 'due_date' })),
         h('label', { 'data-for': 'goal' }, 'Priority',
@@ -921,7 +952,14 @@ export function mount(el, context) {
         // A select only takes a value it still offers (lists change as items are added).
         if (el.tagName !== 'SELECT' || Array.from(el.options).some((o) => o.value === draft.values[el.name])) el.value = draft.values[el.name];
       });
-      if (state.clearDraft) form.name.value = '';
+      if (state.clearDraft) {
+        form.name.value = '';
+        // When and How often belong to the item just added, not to the next one
+        // (found 2026-11-20: a "before bed" carried over to the next habit).
+        if (form.when) form.when.value = '';
+        if (form.at_time) form.at_time.value = '';
+        if (form.frequency) form.frequency.value = 'daily';
+      }
       state.clearDraft = false;
       syncCaptureFields(form);
       if (draft.focused && form.elements[draft.focused]) form.elements[draft.focused].focus();

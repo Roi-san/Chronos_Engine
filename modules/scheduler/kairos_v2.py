@@ -51,6 +51,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from . import direction as Direction
+from . import day_parts as DayParts
 from . import recurrence as Recurrence
 from . import sleep_blocks as SleepBlocks
 from .sleep_gate import get_active_sleep_block, normalize_sleep_policy
@@ -1030,6 +1031,7 @@ class KairosV2Scheduler:
         # Recurring and due-driven granular work stays in scope even when the
         # current template does not explicitly contain it.
         finished_one_offs_skipped: List[str] = []
+        skipped_turns: List[str] = []
         for item in self._iter_schedulable_library_items():
             if self._is_inactive_status(item):
                 continue
@@ -1050,6 +1052,12 @@ class KairosV2Scheduler:
             # says so (weekly to yearly: from its turn until done). Without a
             # result (its history could not be read) the frequency alone decides,
             # and a once-per-period item is shown rather than hidden.
+            # A turn skipped for the whole period ("Skip this week", D9): the pilot's
+            # explicit choice wins until the next turn, so neither the frequency nor
+            # a goal, commitment or due date brings it back before then.
+            if str((recurring_by_identity.get(item_identity) or {}).get("state") or "") == "skipped_turn":
+                skipped_turns.append(str(item.get("name") or "").strip())
+                continue
             if item.get("frequency"):
                 recurring_status = recurring_by_identity.get(item_identity)
                 if recurring_status is not None:
@@ -1180,6 +1188,7 @@ class KairosV2Scheduler:
             "manual_soft_injection_count": manual_soft_injections_applied,
             "manual_adjustment_event_count": len(manual_adjustment_events),
             "finished_one_offs_skipped": finished_one_offs_skipped,
+            "skipped_turns": skipped_turns,
             "assumed_lengths": [
                 f"{row['name']}: {row['minutes']} min ({row['source']})"
                 for row in state.schedule["assumed_lengths"]
@@ -1187,6 +1196,7 @@ class KairosV2Scheduler:
             "recurring_due_today": state.schedule["recurring"]["due_today"],
             "recurring_waiting_for_their_turn": state.schedule["recurring"]["waiting"],
             "recurring_done_this_period": state.schedule["recurring"]["done_this_period"],
+            "recurring_skipped_this_period": state.schedule["recurring"]["skipped_this_period"],
             "recurring_added_after_their_turn": state.schedule["recurring"]["starts_next_period"],
             "daily_items_pushed_after_a_miss": state.schedule["recurring"]["pushed_daily"],
             "frequencies_not_understood": [
@@ -4336,8 +4346,10 @@ class KairosV2Scheduler:
             "status_grace": node.get("status_grace"),
             "mini_of": node.get("mini_of"),
             "mini_variant": node.get("mini_variant"),
-            # The item's own time, a wish (decision D7): see _place_wished_times.
+            # The item's own time, a wish (decision D7), and `when` (a clock time or a
+            # part of the day, decision D8, day_parts.py): see _place_wished_times.
             "wished_time": (str(node.get("start_time") or "").strip() or None),
+            "when": node.get("when"),
             "source": source,
             "reasons": reasons,
             "source_path": source_path,
@@ -4507,7 +4519,7 @@ class KairosV2Scheduler:
         lines for the decision log.
         """
         keys = ("identity", "name", "type", "frequency", "created", "rhythm", "period", "turn", "turn_source",
-                "day_problem", "due", "state", "level", "missed_previous", "days_left", "done_on", "reason")
+                "day_problem", "due", "state", "level", "missed_previous", "days_left", "done_on", "skipped_on", "reason")
         rows = [
             {key: status.get(key) for key in keys}
             for status in (recurring.get("by_identity") or {}).values()
@@ -4530,6 +4542,11 @@ class KairosV2Scheduler:
             "done_this_period": [
                 f"{row['name']}: done on {on(row.get('done_on'))}"
                 for row in periodic if row.get("state") == "done"
+            ],
+            # "Skip this week" (D9): handled for the period, back on its next turn.
+            "skipped_this_period": [
+                f"{row['name']}: skipped on {on(row.get('skipped_on'))}"
+                for row in periodic if row.get("state") == "skipped_turn"
             ],
             # Added after their turn had passed this period (design decision 9).
             "starts_next_period": [
@@ -5423,18 +5440,26 @@ class KairosV2Scheduler:
         expanded_nodes: List[Dict[str, Any]],
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
-        Items with their own time (decision D7; docs/scheduling/planning_and_tracking_model.md, proposal C).
+        Items with their own time or part of the day (decisions D7, D8;
+        docs/scheduling/planning_and_tracking_model.md, proposal C).
 
         Only library items in today's plan (`global_candidate_rules`): the day
-        template's own timed blocks are already fixed slots. A wish is kept when
-        its whole length is free of anchors, timed blocks, windows and earlier
-        kept wishes, has not started yet, and ends before bedtime; candidates are
-        taken in their current order, so the first of two wishes for one time
-        wins. Returns (fixed-time nodes for the kept wishes, one record row per
-        item with a time: name, wished, placed, why).
+        template's own timed blocks are already fixed slots. A wish is
+        - a clock time: `start_time` (builders write `ideal_start_time`,
+          normalised to it), else `when: "21:00"`; kept when its whole length is
+          free of anchors, timed blocks, windows and earlier kept wishes, has not
+          started yet, and ends before bedtime;
+        - a part of the day: `when: morning | afternoon | evening | before bed`
+          (day_parts.py); it takes the first free stretch of its part, or for
+          "before bed" the last one, ending as close to bedtime as possible.
+        Clock times are placed before parts, each in the candidates' current
+        order, so the first of two wishes for one time wins. Returns (fixed-time
+        nodes for the kept wishes, one record row per item with a wish: name,
+        wished, placed, why, and `at` when placed).
         """
         floor = self._runtime_floor_minutes(state)
         boundary = (state.schedule.get("day_budget") or {}).get("sleep_boundary_minutes")
+        bed = int(boundary) if boundary is not None else 24 * 60 - 1
         busy: List[Tuple[int, int, str]] = []
         for anchor in (state.schedule.get("anchor_skeleton") or {}).get("anchors") or []:
             start, length = anchor.get("start_minutes"), anchor.get("duration_minutes")
@@ -5450,42 +5475,108 @@ class KairosV2Scheduler:
                 busy.append((int(start), int(end), f"the {window.get('name') or 'window'} window"))
         fixed_identities = {str(node.get("identity") or "").strip() for node in fixed_nodes}
 
-        kept: List[Dict[str, Any]] = []
-        record: List[Dict[str, Any]] = []
+        # (candidate, kind, value): kind "time" (minutes), "part" (name) or "unknown" (text).
+        wishes: List[Tuple[Dict[str, Any], str, Any]] = []
         for candidate in candidates:
             if candidate.get("source") != "global_candidate_rules":
                 continue
+            if str(candidate.get("identity") or "").strip() in fixed_identities:
+                continue
             start = self._parse_hm(candidate.get("wished_time"))
-            if start is None:
+            if start is not None:
+                wishes.append((candidate, "time", start))
                 continue
+            parsed = DayParts.parse_when(candidate.get("when"))
+            if parsed is not None:
+                wishes.append((candidate, parsed[0], parsed[1]))
+        wishes.sort(key=lambda row: 0 if row[1] == "time" else 1)
+        wake = self._wake_minutes(state) if any(kind == "part" for _, kind, _ in wishes) else DayParts.DEFAULT_WAKE
+
+        kept: List[Dict[str, Any]] = []
+        record: List[Dict[str, Any]] = []
+        for candidate, kind, value in wishes:
             identity = str(candidate.get("identity") or "").strip()
-            if identity in fixed_identities:
-                continue
             length = self._coerce_minutes(candidate.get("duration")) or 0
             if length <= 0:
                 continue
-            end = start + length
-            row = {"name": candidate.get("name"), "identity": identity, "wished": self._minutes_to_hm(start), "placed": False}
-            clash = next((label for (b_start, b_end, label) in busy if b_start < end and b_end > start), None)
-            if start < floor:
-                row["why"] = f"{row['wished']} has passed"
-            elif boundary is not None and end > int(boundary):
-                row["why"] = f"it would run into bedtime ({self._minutes_to_hm(int(boundary))})"
-            elif clash:
-                row["why"] = f"{clash} is at that time"
+            row: Dict[str, Any] = {"name": candidate.get("name"), "identity": identity, "placed": False}
+            start: Optional[int] = None
+            if kind == "unknown":
+                row["wished"] = f"'{value}'"
+                row["why"] = f"'{value}' is not a part of the day Chronos knows (morning, afternoon, evening, before bed)"
+            elif kind == "time":
+                row["wished"] = self._minutes_to_hm(int(value))
+                end = int(value) + length
+                clash = next((label for (b_start, b_end, label) in busy if b_start < end and b_end > int(value)), None)
+                if int(value) < floor:
+                    row["why"] = f"{row['wished']} has passed"
+                elif int(value) >= bed:
+                    # Beyond where this plan ends (after midnight a night owl's plan
+                    # ends at their bedtime), not merely running into it.
+                    row["why"] = f"{row['wished']} is after bedtime ({self._minutes_to_hm(bed)}), where this plan ends"
+                elif end > bed:
+                    row["why"] = f"it would run into bedtime ({self._minutes_to_hm(bed)})"
+                elif clash:
+                    row["why"] = f"{clash} is at that time"
+                else:
+                    start = int(value)
             else:
+                part = str(value)
+                row["wished"] = DayParts.label(part)
+                low, high = DayParts.window(part, wake=wake, bed=bed)
+                if floor >= high:
+                    row["why"] = "it is past bedtime" if part == "before_bed" else f"the {part} has passed"
+                elif low >= bed:
+                    # Only time up to bedtime belongs to this plan (found 2026-11-20: after
+                    # midnight a night owl's morning lies after their 02:00 bedtime).
+                    row["why"] = f"{DayParts.label(part)} is after bedtime ({self._minutes_to_hm(bed)}), where this plan ends"
+                else:
+                    start = self._free_slot(busy, max(low, floor), min(high, bed), length, latest=DayParts.latest_first(part))
+                    if start is None:
+                        row["why"] = f"there was no free time in {DayParts.label(part)}"
+            if start is not None:
                 node = dict(candidate)
-                node.update({"start_time": self._minutes_to_hm(start), "end_time": self._minutes_to_hm(end), "duration": length})
+                node.update({"start_time": self._minutes_to_hm(start), "end_time": self._minutes_to_hm(start + length), "duration": length})
                 normalized = self._discover_fixed_time_structure_nodes([node])
                 if normalized:
                     kept.append(normalized[0])
-                    busy.append((start, end, str(candidate.get("name") or "another item")))
+                    busy.append((start, start + length, str(candidate.get("name") or "another item")))
                     row["placed"] = True
-                    row["why"] = "the time was free"
+                    row["why"] = "the time was free" if kind == "time" else f"there was free time in {row['wished']}"
+                    row["at"] = self._minutes_to_hm(start)
                 else:
                     row["why"] = "it could not be given a slot"
             record.append(row)
         return kept, record
+
+    def _free_slot(
+        self, busy: List[Tuple[int, int, str]], low: int, high: int, length: int, *, latest: bool
+    ) -> Optional[int]:
+        """Start of the first (or, with `latest`, the last) free stretch of `length` minutes in [low, high]."""
+        spans = sorted((max(low, s), min(high, e)) for (s, e, _) in busy if s < high and e > low)
+        gaps: List[Tuple[int, int]] = []
+        cursor = low
+        for start, end in spans:
+            if start > cursor:
+                gaps.append((cursor, start))
+            cursor = max(cursor, end)
+        if cursor < high:
+            gaps.append((cursor, high))
+        fits = [gap for gap in gaps if gap[1] - gap[0] >= length]
+        if not fits:
+            return None
+        return fits[-1][1] - length if latest else fits[0][0]
+
+    def _wake_minutes(self, state: KairosV2RunState) -> int:
+        """When you wake up today: the end of the day template's main sleep block (day_parts.py)."""
+        chosen = state.schedule.get("day_template")
+        template = chosen.get("template") if isinstance(chosen, dict) else None
+        if isinstance(template, dict):
+            anchor = self._find_primary_sleep_anchor(template, state.target_date)
+            end = (anchor or {}).get("end_minutes")
+            if end is not None:
+                return int(end) % (24 * 60)
+        return DayParts.DEFAULT_WAKE
 
     def _identities_covered_by_structure(
         self,

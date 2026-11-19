@@ -210,11 +210,31 @@ def day_template_line(meta):
     return {"name": choice.get("name"), "why": str(choice.get("why") or "")}
 
 
+def _recurring_rows(meta):
+    """The rows of `schedule.recurring.items` (one per recurring item, D2)."""
+    recurring = meta.get("recurring") if isinstance(meta, dict) else None
+    rows = (recurring or {}).get("items") if isinstance(recurring, dict) else None
+    return [row for row in rows or [] if isinstance(row, dict)]
+
+
+def turn_periods(meta):
+    """
+    {lowercase name: "week" | "month" | "quarter" | "year"} for today's items that
+    repeat once per period. Home offers "Skip this <period>" on their blocks (D9).
+    """
+    out = {}
+    for row in _recurring_rows(meta):
+        if row.get("rhythm") == "period" and row.get("name") and row.get("period"):
+            out[str(row["name"]).strip().lower()] = str(row["period"])
+    return out
+
+
 def plan_notes(meta):
     """
     Things Kairos did that would otherwise only be in the schedule file: sleep
-    found by a block's name (D5), an own time that could not be kept (D7), and
-    files it could not read (issue 31).
+    found by a block's name (D5), an own time or part of the day that could not
+    be kept (D7, D8), turns skipped for the whole period (D9), and files it could
+    not read (issue 31).
     """
     notes = []
     if not isinstance(meta, dict):
@@ -222,10 +242,20 @@ def plan_notes(meta):
     sleep = meta.get("sleep_blocks")
     if isinstance(sleep, dict) and sleep.get("by_name") and sleep.get("note"):
         notes.append(str(sleep["note"]))
-    # An item's own time is a wish (D7): when it could not be kept, say why.
+    # An item's own time or part of the day is a wish (D7, D8): when it could not
+    # be kept, say why. `wished` is "21:00", "the evening", "just before bed".
     for row in meta.get("wished_times") or []:
         if isinstance(row, dict) and not row.get("placed") and row.get("name"):
-            notes.append(f"{row['name']} wanted {row.get('wished')}, but {row.get('why')}, so Chronos planned it in free time instead.")
+            notes.append(f"{row['name']} was meant for {row.get('wished')}, but {row.get('why')}, so Chronos planned it in free time instead.")
+    # Turns skipped for the whole period stay visible until they come back (D9).
+    skipped = {}
+    for row in _recurring_rows(meta):
+        if row.get("state") == "skipped_turn" and row.get("name"):
+            skipped.setdefault(str(row.get("period") or "week"), []).append(str(row["name"]))
+    for period, names in skipped.items():
+        names = sorted(names, key=str.lower)
+        back = "It is" if len(names) == 1 else "They are"
+        notes.append(f"Skipped this {period}: {', '.join(names)}. {back} back next {period}.")
     for row in meta.get("unreadable_files") or []:
         if isinstance(row, dict) and row.get("file"):
             notes.append(f"Skipped {row['file']}: Chronos could not read it ({row.get('error') or 'unknown error'}). Fix or remove the file.")
@@ -351,6 +381,7 @@ def _today():
         out["length_notes"] = length_notes(None)
     out["day_template"] = day_template_line(meta)
     out["plan_notes"] = plan_notes(meta)
+    out["turn_periods"] = turn_periods(meta)
 
     def walk(items, depth, group=""):
         for item in items or []:

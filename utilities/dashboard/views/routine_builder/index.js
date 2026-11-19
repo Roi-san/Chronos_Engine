@@ -176,6 +176,13 @@ export async function mount(el, context) {
     <div class="title">Inspector</div>
     <div class="sub">Template properties</div>
     <div class="f"><label>Category</label><select id="pCategory" class="sel"><option value="">(none)</option></select></div>
+    <div class="f" title="How often Chronos plans it on its own. Without it, the routine is planned only on a day template (Day Builder) or when a goal or commitment asks."><label>How often</label><select id="pFreq" class="sel">
+      <option value="">Only on a day template</option><option value="daily">Every day</option><option value="weekly">Once a week</option>
+      <option value="monthly">Once a month</option><option value="quarterly">Once a quarter</option><option value="yearly">Once a year</option></select></div>
+    <div class="f" title="A wish: Chronos keeps it when there is room, otherwise it plans it in free time and says why on Home."><label>When</label><select id="pWhen" class="sel">
+      <option value="">Any time</option><option value="morning">Morning</option><option value="afternoon">Afternoon</option>
+      <option value="evening">Evening</option><option value="before bed">Before bed</option><option value="at">At a time…</option></select>
+      <input id="pAt" class="in" type="time" style="margin-top:4px" /></div>
     <div class="f"><label>Tags (comma)</label><input id="pTags" class="in" /></div>
     <div class="f"><label>Notes</label><textarea id="pNotes" class="ta"></textarea></div>
     <div class="f"><label>Status Requirements (YAML map)</label><textarea id="pStatus" class="ta" placeholder="energy: high&#10;focus: medium"></textarea></div>
@@ -269,6 +276,10 @@ export async function mount(el, context) {
     pCategory.value = keep;
   };
 
+  // How often and When (decisions D2, D7, D8): written every save, so choosing
+  // "Only on a day template" or "Any time" clears an older value (`set` merges).
+  const syncWhen = () => { const at = el.querySelector('#pAt'); at.hidden = el.querySelector('#pWhen').value !== 'at'; };
+  el.querySelector('#pWhen').addEventListener('change', syncWhen);
   const getTemplateProps = () => {
     const category = String(pCategory.value || '').trim();
     const tagsRaw = String(el.querySelector('#pTags').value || '').trim();
@@ -280,6 +291,11 @@ export async function mount(el, context) {
     if (notes) out.notes = notes;
     if (tagsRaw) { const tags = tagsRaw.split(',').map((x) => x.trim()).filter(Boolean); if (tags.length) out.tags = tags; }
     if (statusRaw) { const p = yparse(statusRaw); out.status_requirements = (p && typeof p === 'object' && !Array.isArray(p)) ? p : parseLooseMap(statusRaw); }
+    out.frequency = String(el.querySelector('#pFreq').value || '');
+    const when = String(el.querySelector('#pWhen').value || '');
+    const at = String(el.querySelector('#pAt').value || '').trim();
+    out.when = (when && when !== 'at') ? when : '';
+    out.start_time = (when === 'at' && at) ? at : '';
     if (extraRaw) { const p = yparse(extraRaw); Object.assign(out, (p && typeof p === 'object' && !Array.isArray(p)) ? p : parseLooseMap(extraRaw)); }
     return out;
   };
@@ -340,6 +356,13 @@ export async function mount(el, context) {
       ? Object.entries(tpl.status_requirements).map(([k,v]) => `${k}: ${v}`).join('\n') : '';
     el.querySelector('#pStatus').value = sr;
     el.querySelector('#pExtra').value = '';
+    const freq = String(tpl?.frequency || '').trim().toLowerCase();
+    el.querySelector('#pFreq').value = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'].includes(freq) ? freq : '';
+    const start = String(tpl?.start_time || '').trim();
+    const whenRaw = String(tpl?.when || '').trim().toLowerCase().replace(/[_-]/g, ' ');
+    el.querySelector('#pWhen').value = start ? 'at' : (['morning', 'afternoon', 'evening', 'before bed'].includes(whenRaw) ? whenRaw : '');
+    el.querySelector('#pAt').value = start;
+    syncWhen();
   };
 
   const flattenTemplateChildren = (nodes, level = 0, out = []) => {

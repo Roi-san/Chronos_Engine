@@ -256,9 +256,16 @@ def evaluate(
     turn: Optional[date] = None,
     turn_source: Optional[str] = None,
     created: Optional[date] = None,
+    skipped: Iterable[date] = (),
 ) -> Dict[str, Any]:
     """
     Where a recurring item stands on `target_date`.
+
+    `skipped` (decision D9, 2026-11-19) holds the days its turn was skipped for
+    the whole period ("Skip this week"): for a weekly to yearly item that turn is
+    handled (state `skipped_turn`, not due, no push) and it does not count as
+    "missed last time" in the next period. It is not a completion. Daily and
+    weekday items ignore it (their Skip is always "not today").
 
     `info` comes from parse_frequency; `done` holds every day the item (or its
     lighter version) was done; `turn` / `turn_source` come from spread_turns;
@@ -268,6 +275,7 @@ def evaluate(
     """
     rhythm = info.get("rhythm")
     done_days = {day for day in (done or ()) if isinstance(day, date)}
+    skipped_days = {day for day in (skipped or ()) if isinstance(day, date)}
     status: Dict[str, Any] = {
         "rhythm": rhythm, "period": info.get("period"), "due": False, "state": "", "level": 0.0,
         "missed_previous": False, "days_left": None, "turn": None, "turn_source": turn_source,
@@ -297,6 +305,11 @@ def evaluate(
         if this_period:
             status.update(state="done", done_on=this_period[-1].isoformat())
             return status
+        skipped_this_period = sorted(day for day in skipped_days if start <= day <= target_date)
+        if skipped_this_period:
+            status.update(state="skipped_turn", skipped_on=skipped_this_period[-1].isoformat(),
+                          reason=f"{_LABEL[period]}: skipped this {period}; back next {period}.")
+            return status
         # Added after its turn had passed this period (design decision 9): it was
         # never missed, it did not exist yet. It starts with its next turn, so
         # setting up many chores mid-period does not pile up "missed" ones.
@@ -309,8 +322,10 @@ def evaluate(
         state, level = _curve(days_left - 1)
         # "Missed last time" only when the item was demonstrably around before
         # this period (it was done at some point), as for commitments.
+        # A turn skipped on purpose last period (D9) was handled, not missed.
         missed_previous = (
             not any(previous_start <= day <= previous_end for day in done_days)
+            and not any(previous_start <= day <= previous_end for day in skipped_days)
             and any(day < start for day in done_days)
         )
         if missed_previous:
@@ -399,9 +414,12 @@ def evaluate_library(
     items: List[Dict[str, Any]],
     target_date: date,
     completed_by_date: Dict[date, set],
+    skipped_by_date: Optional[Dict[date, set]] = None,
 ) -> Dict[str, Any]:
     """
     Every active recurring item's status on `target_date`.
+
+    `skipped_by_date` (D9): Periods.turn_skips_by_date over the same window.
 
     Returns {"by_identity": {identity: status}, "unrecognised": [...]}. Each
     status is evaluate()'s, plus identity, name, type, frequency, day_problem
@@ -438,10 +456,12 @@ def evaluate_library(
         name = str(item.get("name")).strip()
         names = [_token(name)] + Periods.mini_names_for(item, items)
         done = Periods.done_dates(item, names, library_by_name, completed_by_date)
+        own = _token(name)
+        skipped = [day for day, skipped_names in (skipped_by_date or {}).items() if own in skipped_names]
         turn_row = turns.get(identity) or {}
         created = Periods.parse_day(item.get("created"))
         status = evaluate(info, target_date, done, turn=turn_row.get("turn"), turn_source=turn_row.get("source"),
-                          created=created)
+                          created=created, skipped=skipped)
         status.update({
             "identity": identity,
             "name": name,
@@ -460,5 +480,7 @@ def evaluate_library(
 def load_recurring(user_dir: str, target_date: date) -> Dict[str, Any]:
     """read_library + the completion logs it needs + evaluate_library, in one call."""
     items = read_library(user_dir)
-    completed_by_date = Periods.completed_names_by_date(user_dir, log_window_start(target_date, items), target_date)
-    return evaluate_library(items, target_date, completed_by_date)
+    window_start = log_window_start(target_date, items)
+    completed_by_date = Periods.completed_names_by_date(user_dir, window_start, target_date)
+    skipped_by_date = Periods.turn_skips_by_date(user_dir, window_start, target_date)
+    return evaluate_library(items, target_date, completed_by_date, skipped_by_date)

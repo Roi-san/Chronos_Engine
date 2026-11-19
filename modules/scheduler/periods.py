@@ -162,6 +162,24 @@ def completed_names_by_date(user_dir: str, start: date, end: date) -> Dict[date,
     lists the folder once instead of checking every date, and uses the fast
     YAML parser.
     """
+    return _names_by_date(user_dir, start, end, lambda entry: _token(entry.get("status")) in ("completed", "done"))
+
+
+def turn_skips_by_date(user_dir: str, start: date, end: date) -> Dict[date, Set[str]]:
+    """
+    Names whose turn was skipped for the whole period on each day ("Skip this
+    week", decision D9, 2026-11-19): log entries with `status: skipped` and
+    `skip: period`. A plain skip ("not today") is not one. A skipped turn is not
+    a completion: only recurrence reads it (handled for the period).
+    """
+    return _names_by_date(
+        user_dir, start, end,
+        lambda entry: _token(entry.get("status")) == "skipped" and _token(entry.get("skip")) == "period",
+    )
+
+
+def _names_by_date(user_dir: str, start: date, end: date, keep) -> Dict[date, Set[str]]:
+    """The lowercase names of the log entries `keep` accepts, per day from `start` to `end`."""
     out: Dict[date, Set[str]] = {}
     folder = os.path.join(user_dir, "schedules", "completions")
     try:
@@ -184,7 +202,7 @@ def completed_names_by_date(user_dir: str, start: date, end: date) -> Dict[date,
         names: Set[str] = set()
         for key, raw in (entries.items() if isinstance(entries, dict) else []):
             entry = raw if isinstance(raw, dict) else {"status": raw}
-            if _token(entry.get("status")) not in ("completed", "done"):
+            if not keep(entry):
                 continue
             name = entry.get("name") or (str(key).split("@", 1)[0] if "@" in str(key) else key)
             if _token(name):

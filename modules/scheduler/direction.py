@@ -493,7 +493,9 @@ def load_direction(user_dir: str, target_date: date) -> Dict[str, Any]:
     recurring: Dict[str, Any] = {"by_identity": {}, "unrecognised": [], "error": recurring_error}
     if recurring_items is not None:
         try:
-            recurring = Recurrence.evaluate_library(recurring_items, target_date, completed_by_date)
+            # Turns skipped for the whole period (D9) over the same window.
+            skipped_by_date = Periods.turn_skips_by_date(user_dir, min(window), target_date)
+            recurring = Recurrence.evaluate_library(recurring_items, target_date, completed_by_date, skipped_by_date)
         except Exception as exc:
             recurring = {"by_identity": {}, "unrecognised": [], "error": str(exc)}
     for identity, status in (recurring.get("by_identity") or {}).items():

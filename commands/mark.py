@@ -82,7 +82,8 @@ def run(args, properties):
     # the `name:status` token already split off into `properties` (the console
     # treats any `key:value` token as a property). Put it back together.
     if ':' not in full_arg_string and isinstance(properties, dict):
-        reserved = {"date"}
+        # `skip:period` ("Skip this week", D9) is an option, not the name:status token.
+        reserved = {"date", "skip"}
         candidates = [
             (key, value) for key, value in properties.items()
             if isinstance(key, str) and not key.startswith("__") and key.lower() not in reserved
@@ -171,6 +172,11 @@ def run(args, properties):
         print(err)
         return
 
+    skip_period = (
+        str(new_status).strip().lower() == "skipped"
+        and str((properties or {}).get("skip") or "").strip().lower() in {"period", "turn", "week", "month", "quarter", "year", "true"}
+    )
+
     scheduled_start = desired_start
     scheduled_end = desired_end
     if item_in_schedule:
@@ -190,6 +196,11 @@ def run(args, properties):
         }
         if quality:
             entry["quality"] = quality
+        # "Skip this week" (decision D9, 2026-11-19): the turn is handled for the
+        # whole period. Older readers still see an ordinary `skipped`; only
+        # recurrence reads `skip: period` (periods.turn_skips_by_date).
+        if skip_period:
+            entry["skip"] = "period"
         entries[block_key] = entry
         with open(completion_path, 'w') as f:
             yaml.dump(completion_data, f, default_flow_style=False, sort_keys=False)

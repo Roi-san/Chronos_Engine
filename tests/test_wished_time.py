@@ -139,6 +139,14 @@ class WhenTheTimeIsNotFree(unittest.TestCase):
         self.assertFalse(row["placed"])
         self.assertIn("bedtime", row["why"])
 
+    def test_a_time_after_bedtime(self):
+        # Added 2026-11-20: after midnight a night owl's plan ends at their bedtime
+        # (02:00), so an evening wish is beyond this plan, not "running into" it.
+        s = plan({"habits/meditate.yml": habit("Meditate", 15, start_time="23:45")})
+        row = wish(s, "Meditate")
+        self.assertFalse(row["placed"])
+        self.assertIn("after bedtime (23:30)", row["why"])
+
     def test_not_its_day_means_not_planned_at_all(self):
         # A weekly chore whose turn is Saturday is not on Thursday's plan, time or not.
         chore = {"name": "Laundry", "type": "habit", "duration": 60, "frequency": "weekly", "day": "saturday",
