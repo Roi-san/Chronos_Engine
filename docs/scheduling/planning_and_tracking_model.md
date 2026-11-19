@@ -1,6 +1,6 @@
 # What the user sets, what Kairos reads: one model for planning and tracking
 
-Status: **D5, D6, D7 decided and built 2026-11-19 (`5566407`); D8 to D11 open.** (First written as a proposal waiting for D5 to D11.) Written 2026-11-19 ~22:40 after the pilot asked to "think of the system as a whole and Kairos as the backbone always, such that we don't overlook a detail on how things are scheduled", and "I don't want mismatching to happen anywhere". Nothing in this document is built yet. Evidence: tracker issues 38 to 45 and the checks in `docs/WORKLOG.md` (2026-11-19 entries).
+Status: **D5, D6, D7 decided and built 2026-11-19 (`5566407`); D8 and D9 decided 2026-11-19 and built 2026-11-20 (`a5c0f63`); D10 and D11 open.** (First written as a proposal waiting for D5 to D11.) Written 2026-11-19 ~22:40 after the pilot asked to "think of the system as a whole and Kairos as the backbone always, such that we don't overlook a detail on how things are scheduled", and "I don't want mismatching to happen anywhere". Nothing in this document is built yet. Evidence: tracker issues 38 to 45 and the checks in `docs/WORKLOG.md` (2026-11-19 entries).
 
 ## The problem in one sentence
 
@@ -71,7 +71,9 @@ A routine that is **on the day template and also has a frequency** is planned on
 **D7. Decided 2026-11-19: a wish**, the pilot: "a wish yes. Appointments should be locked in place obviously" (appointments: #17, and fixed library items #47). **Built** the Kairos part the same night (see Build log); the time fields in the forms come with D8.
 
 **D7. The question:** is an item's own time a wish (it moves when the slot is taken, as above) or a fixed appointment (it blocks the time like a template anchor)? **Recommendation: a wish.** Fixed things belong on the day template, or later as appointments (#17); a wish keeps the day forgiving and visible.
-**D8. Decision:** is "before bed" a part of the day of its own? **Recommendation: yes.** It is exactly what a wind-down or bedtime routine needs, and it follows the sleep block wherever it is.
+**D8. Decided 2026-11-19: yes.** The pilot wrote "the answer is 8. the most intuitive answer"; read as yes, the recommended and most intuitive option (say so if that was not meant). **Built** with the parts of the day and the form fields (see Build log, 2026-11-20).
+
+**D8. The question:** is "before bed" a part of the day of its own? **Recommendation: yes.** It is exactly what a wind-down or bedtime routine needs, and it follows the sleep block wherever it is.
 
 ### D. One record of Done, Skip and missed (D9, D11) · size M · roadmap step 3
 
@@ -81,7 +83,9 @@ This is step 3 of `docs/NEXT_SESSION.md` ("one way to record a completion", issu
 - **Skip today means "not today"**, as it does now: closed for today, not counted as done, back tomorrow with a little more push (weekly and longer items stay due until done, D2; a commitment's push grows). Never a penalty, never double.
 - **Not done by the end of its turn** (a daily habit at midnight, a weekly chore at Sunday night) is recorded as missed by that same interpreter, so streaks, commitments and Home agree about it.
 
-**D9. Decision:** should a weekly or longer item also offer **"Skip this turn"** (not this week: comes back next week, no push), next to "not today"? **Recommendation: yes, as a second button only on items that repeat weekly or less often.** "Not today" stays the default.
+**D9. Decided 2026-11-19: yes** (the pilot: "also a yes if you think you can do that"). **Built** (see Build log, 2026-11-20). One call that follows from the pilot's rules, open to veto: the skip wins for the period, so a goal, commitment or due date does not bring the item back before its next turn.
+
+**D9. The question:** should a weekly or longer item also offer **"Skip this turn"** (not this week: comes back next week, no push), next to "not today"? **Recommendation: yes, as a second button only on items that repeat weekly or less often.** "Not today" stays the default.
 **D11. Decision:** when you finish a routine, do its steps count as done (a "Read a book" habit inside the routine keeps its streak and counts for its commitment)? **Recommendation: yes**, each step counts once, and "Skip" on the routine skips its steps for today.
 
 ### E. Goals measure themselves from what you do (D10) · size S-M
@@ -115,7 +119,17 @@ All in a throwaway export first, tests before code (failures recorded), full sui
 - **C (D7), the Kairos part.** `_normalize_candidate` keeps `wished_time`; `_place_wished_times` in `populate_day_and_windows` turns free wishes into timed slots and records every wish in `schedule.wished_times`; `home_api.plan_notes` says when one moved. Tests: `tests/test_wished_time.py`, 10 (9 failed before; the tenth, "not its day means not planned", guards unchanged behaviour). One test was wrong at first (it wished 12:00, inside Work, while planning the whole day); corrected to plan from now, as `today` does.
 - **Results.** Full suite 536 passed, 0 failed (23:18). `rich_dump`, `status_week`, `status_matrix`, `fixed_week`, `plan_dump`, `chores_month`, `sleep_probe`, `routine_probe`, `gap_probe`: identical before and after (no fake life had an own-time item or a name-only sleep rule that changed).
 
+## Build log (2026-11-19 ~23:40 to 2026-11-20)
+
+- **D8, parts of the day.** New `modules/scheduler/day_parts.py` (`parse_when`, `window`, `latest_first`, `label`, `PART_LABELS`). Kairos: candidates keep `when`; `_place_wished_times` takes clock times (`start_time`, or `when: "21:00"`) first, then parts; `_free_slot` finds the first free stretch of a part, or the last one for before bed; `_wake_minutes` is the end of the day template's main sleep block (07:00 without one); bedtime is `day_budget.sleep_boundary_minutes`. Rows in `schedule.wished_times` carry `wished` ("21:00", "the evening", "just before bed"), `placed`, `why` and `at`. Home's note now reads "X was meant for ..., but ..." for both D7 and D8.
+- **Forms.** Home's capture box: When (task, habit) and How often (habit); the Routine Builder: How often and When, written on every save (`set` merges, so an empty value clears an older one) and loaded with the routine.
+- **D9, Skip this week.** `commands/mark.py` (`skip:period`, also from the console), `periods.turn_skips_by_date` (one shared log loop, `_names_by_date`), `recurrence.evaluate(..., skipped=...)` and `evaluate_library(..., skipped_by_date)`, `direction.load_direction`, Kairos (`skipped_turns`, `schedule.recurring.skipped_this_period`), `home_api.turn_periods` and a plan note, Home's button.
+- **How it fits the rest.** Template windows count as busy for part wishes (#49). Before bed follows where the plan ends, so for a night owl it is before 23:59 until issue 9 (#50). A skipped turn is not a completion, so the coming "one record of Done / Skip / missed" (step 3) keeps it as its own outcome. Template members are structure: a routine placed on the day template is not removed by a skipped turn of its library copy.
+- **Found by the browser walk and fixed before the commit.** When and How often carried over to the next capture (now reset after Add); a part of the day after where tonight's plan ends was placed after bedtime (parts are clipped to the plan's end); a clock time after bedtime was described as "running into" it (now "is after bedtime, where this plan ends").
+- **Results.** Tests: 13 + 13 new, plus one in the D7 file (all new behaviour failed before; 3 guard unchanged behaviour); full suite 563 passed, 0 failed; the nine fake-life dumps and probes identical; the headless-Chrome walk (see the tracker's Done row).
+
 ## Log
 
 - 2026-11-19 ~22:40: first version, after the pilot's questions about bedtime routines, Perfect / Sick day templates, "how often / when", skips and goal progress. Evidence gathered the same evening (tracker 38 to 45). Waiting for D5 to D11.
 - 2026-11-19 ~23:25: the pilot decided D5 ("go with your gut": (a)), D6 (yes, yes; no picker for now), D7 (a wish; appointments locked in place). A, B (without the picker) and the Kairos part of C built the same night; see Build log. Open: D8 to D11.
+- 2026-11-20: D8 ("the most intuitive answer": yes) and D9 (yes) built with the form fields; see Build log. Open: D10, D11.

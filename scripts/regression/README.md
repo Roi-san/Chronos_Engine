@@ -49,6 +49,8 @@ Identical dumps mean the change did not move anything in those fake lives. When 
 
 `onboarding_check.js` walks the dashboard's onboarding to the end (added 2026-11-19, issue 32): types a nickname with the keyboard, prints every step's text, opens Life Setup from step 4, saves a day template as the Day Builder does, closes Life Setup and prints what step 4 says then, and at the end prints what is on disk (nickname, day templates, routines, habits, goals, commitments, rewards, achievements) through the server's API. To walk Life Setup itself to the end from inside onboarding, see the 2026-11-19 work-log entry (it used the scratch driver `drive.js` with `W.check` / `W.click` on Life Setup).
 
+`when_and_skip_check.js` (added 2026-11-20, decisions D8 and D9) uses Home's capture box (How often, When), the Routine Builder (How often, When: save, reload, clear), plans the day, and presses "Skip this week" on a weekly item; it prints what is on disk after every step. Copy a day template into the export first (the plan runs at the real clock).
+
 `chore_setup_check.js` walks the Chore Setup wizard to the end (six built-in chores and one custom weekly chore, days picked where offered) and prints what the wizard says; `python scripts/regression/chore_files.py <export>` then lists what it really wrote (`frequency`, `day`, `duration`, `created`, and any nested `data` field). Always compare the two: the dashboard reports a console command as done whenever it exits normally (issue 23).
 
 ```bash
