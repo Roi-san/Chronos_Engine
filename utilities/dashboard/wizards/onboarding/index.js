@@ -422,8 +422,14 @@ const state = {
   statusValues: {},
   currentStatus: {},
   preferences: {},
-  createdItems: [],
+  // What this run really saved, for the last step (issue 32: it used to list
+  // example items that were never created).
+  saved: [],
 };
+
+function noteSaved(text){
+  if (!state.saved.includes(text)) state.saved.push(text);
+}
 
 function statusSlug(name){
   return (name || '').toLowerCase().replace(/\s+/g, '_');
@@ -537,12 +543,61 @@ async function savePreferences(){
   await apiRequest('/api/preferences', { method: 'POST', body: state.preferences });
 }
 
-async function copyItem(type, source, newName){
-  await apiRequest('/api/item/copy', {
-    method: 'POST',
-    body: { type, source, new_name: newName },
+// Steps 4 and 5 used to clone example items ("Weekday Example", "Learn Guitar
+// Example", ...) through /api/item/copy. alpha_v0.3 no longer ships them, the
+// server answered 200 for every missing one (issue 23) and the last step listed
+// them as created (issue 32). The steps now open the wizards that build the real
+// thing and show what exists on disk.
+
+// Names of the user's day templates (kind 'template') or items, or null when the
+// server could not be asked.
+async function listNames(kind, type){
+  try {
+    if (kind === 'template'){
+      const data = await apiRequest(`/api/template/list?type=${encodeURIComponent(type)}`);
+      return Array.isArray(data?.templates) ? data.templates.map(String) : [];
+    }
+    const data = await apiRequest(`/api/items?type=${encodeURIComponent(type)}`);
+    return (Array.isArray(data?.items) ? data.items : []).map(i => String(i?.name || '')).filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+// Opens another wizard on top of onboarding (Home does the same).
+async function openWizard(name){
+  if (typeof window.ChronosLaunchWizard === 'function') return window.ChronosLaunchWizard(name);
+  const mod = await import(`../${name}/index.js`);
+  return mod.launch({ bus: window.ChronosBus }, {});
+}
+
+// Calls onClose whenever another wizard's overlay is removed (closed or finished),
+// while `container` is still on the page. Returns a function that stops watching.
+function watchOtherWizards(container, onClose){
+  const observer = new MutationObserver((records) => {
+    if (!document.body.contains(container)){ observer.disconnect(); return; }
+    const closed = records.some(r => [...r.removedNodes].some(n =>
+      n instanceof Element && n.classList.contains('chronos-wizard-overlay') && !n.classList.contains('onboarding-overlay')));
+    if (closed) onClose();
   });
-  state.createdItems.push(`${type}:${newName}`);
+  observer.observe(document.body, { childList: true });
+  return () => observer.disconnect();
+}
+
+function describeNames(names, none){
+  if (names === null) return 'Could not check right now.';
+  return names.length ? names.join(', ') : none;
+}
+
+function wizardButton(label, wizard, ctx){
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = label;
+  btn.addEventListener('click', async () => {
+    try { await openWizard(wizard); }
+    catch (err){ ctx.setStatus(`Could not open ${label.replace(/^Open /, '')}: ${err?.message || err}`); }
+  });
+  return btn;
 }
 
 async function runCli(command, args = [], properties = {}){
@@ -620,6 +675,7 @@ function renderCategoryStep(ctx){
   return {
     async beforeNext(){
       await saveCategories();
+      noteSaved('Life categories and their order');
       ctx.setStatus('Categories saved.');
       return true;
     }
@@ -762,70 +818,47 @@ function renderStatusStep(ctx){
     async beforeNext(){
       await saveStatuses();
       await updateCurrentStatus();
+      noteSaved('Status dimensions and how you feel right now');
       ctx.setStatus('Statuses saved and current values updated.');
       return true;
     }
   };
 }
 
-function renderTemplateStep(ctx){
+function renderDayStep(ctx){
   const container = ctx.container;
   container.innerHTML = '';
   const intro = document.createElement('p');
-  intro.textContent = 'Clone the Weekday Example and any routines you want as a baseline. Use the checkboxes to duplicate multiple items at once.';
+  intro.textContent = 'Chronos plans every day on a day template: your sleep, work, meals and commute, the fixed points everything else flows around. Life Setup builds yours in a few minutes.';
   container.appendChild(intro);
-  const dayInput = document.createElement('input');
-  dayInput.value = 'Weekday Flow';
-  container.appendChild(labelled('New day template name', dayInput));
-  const cloneBtn = document.createElement('button');
-  cloneBtn.textContent = 'Clone Weekday Example';
-  cloneBtn.addEventListener('click', async ()=>{
-    const name = dayInput.value.trim();
-    if (!name) return;
-    cloneBtn.disabled = true;
-    try{
-      await copyItem('day', 'Weekday Example', name);
-      ctx.setStatus(`Created day template "${name}"`);
-    } catch (err){
-      ctx.setStatus(err.message);
-    } finally {
-      cloneBtn.disabled = false;
-    }
-  });
-  container.appendChild(cloneBtn);
-  const items = [
-    { type: 'routine', source: 'Morning Routine (Example)', label: 'Morning Routine' },
-    { type: 'routine', source: 'Evening Routine (Example)', label: 'Evening Routine' },
-    { type: 'routine', source: 'Bedtime Routine (Example)', label: 'Bedtime Routine' },
-    { type: 'habit', source: 'Creative Practice (Example)', label: 'Creative Practice Habit' },
-    { type: 'habit', source: 'Morning Check-In (Example)', label: 'Morning Check-In Habit' },
-  ];
-  const selections = new Set();
-  const grid = document.createElement('div');
-  grid.className = 'items-grid';
-  items.forEach(item => {
-    const label = document.createElement('label');
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.addEventListener('change', ()=> {
-      if (checkbox.checked) selections.add(item);
-      else selections.delete(item);
-    });
-    label.append(checkbox, document.createTextNode(' ' + item.label));
-    grid.appendChild(label);
-  });
-  container.appendChild(grid);
+
+  const card = document.createElement('div');
+  card.className = 'list-card';
+  const summary = document.createElement('div');
+  summary.className = 'onboarding-day-summary';
+  summary.textContent = 'Checking your day templates...';
+  const buttons = document.createElement('div');
+  buttons.className = 'list-row';
+  buttons.append(wizardButton('Open Life Setup', 'life_setup', ctx), wizardButton('Open Chore Setup', 'chore_setup', ctx));
+  card.append(summary, buttons);
+  container.appendChild(card);
+
+  const more = document.createElement('p');
+  more.textContent = 'Chore Setup adds the repeating upkeep (dishes, laundry, bills). Routines, such as a morning routine, are built in the Routine Builder view and put on your day in the Day Builder, so Chronos plans them.';
+  container.appendChild(more);
+
+  const refresh = async () => {
+    const days = await listNames('template', 'day');
+    state.dayTemplates = days;
+    if (days === null) summary.textContent = 'Could not check your day templates right now.';
+    else if (!days.length) summary.textContent = 'You have no day template yet, so Chronos has no day to plan.';
+    else summary.textContent = `Your day ${days.length === 1 ? 'template' : 'templates'}: ${days.join(', ')}.`;
+  };
+  void refresh();
+  const stop = watchOtherWizards(container, refresh);
   return {
-    async beforeNext(){
-      for (const item of selections){
-        const newName = `${item.label} (${state.nickname || 'You'})`;
-        await copyItem(item.type, item.source, newName);
-      }
-      if (selections.size){
-        ctx.setStatus(`Cloned ${selections.size} example items.`);
-      }
-      return true;
-    }
+    cleanup(){ stop(); },
+    async beforeNext(){ return true; },
   };
 }
 
@@ -833,41 +866,35 @@ function renderGoalStep(ctx){
   const container = ctx.container;
   container.innerHTML = '';
   const info = document.createElement('p');
-  info.textContent = 'Bring goals, commitments, and rewards online with one click.';
+  info.textContent = 'Goals tell Chronos what you are aiming for; it pushes the habits and tasks linked to them. Commitments are promises such as "3 workouts a week": Chronos pushes their habit harder as the week runs out.';
   container.appendChild(info);
-  const toggles = [
-    { key: 'goal', label: 'Learn Guitar Goal Example', type: 'goal', source: 'Learn Guitar Example' },
-    { key: 'commitment', label: 'Practice Rhythm Commitment Example', type: 'commitment', source: 'Practice Rhythm Commitment (Example)' },
-    { key: 'reward', label: 'Game Break Reward Example', type: 'reward', source: 'Game Break Reward (Example)' },
-    { key: 'achievement', label: 'Practice Streak Achievement Example', type: 'achievement', source: 'Practice Streak Achievement (Example)' },
-  ];
-  const selected = new Set(toggles);
-  const grid = document.createElement('div');
-  grid.className = 'items-grid';
-  toggles.forEach(t => {
-    const label = document.createElement('label');
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.checked = true;
-    checkbox.addEventListener('change', ()=> {
-      if (checkbox.checked) selected.add(t);
-      else selected.delete(t);
-    });
-    label.append(checkbox, document.createTextNode(' ' + t.label));
-    grid.appendChild(label);
-  });
-  container.appendChild(grid);
+
+  const card = document.createElement('div');
+  card.className = 'list-card';
+  const summary = document.createElement('div');
+  summary.className = 'onboarding-goal-summary';
+  summary.textContent = 'Checking your goals...';
+  const buttons = document.createElement('div');
+  buttons.className = 'list-row';
+  buttons.append(wizardButton('Open Goal Planning', 'goal_planning', ctx));
+  card.append(summary, buttons);
+  container.appendChild(card);
+
+  const how = document.createElement('p');
+  how.textContent = 'To make a commitment, use the capture box on Home: choose Commitment, then how often, per what, and the habit it counts. Everything here can also wait: Home keeps a checklist.';
+  container.appendChild(how);
+
+  const refresh = async () => {
+    const [goals, commitments] = await Promise.all([listNames('item', 'goal'), listNames('item', 'commitment')]);
+    state.goals = goals;
+    state.commitments = commitments;
+    summary.textContent = `Goals: ${describeNames(goals, 'none yet')}. Commitments: ${describeNames(commitments, 'none yet')}.`;
+  };
+  void refresh();
+  const stop = watchOtherWizards(container, refresh);
   return {
-    async beforeNext(){
-      for (const entry of selected){
-        const newName = entry.source.replace('(Example)', `(${state.nickname || 'You'})`).trim();
-        await copyItem(entry.type, entry.source, newName);
-      }
-      if (selected.size){
-        ctx.setStatus(`Cloned ${selected.size} long-term items.`);
-      }
-      return true;
-    }
+    cleanup(){ stop(); },
+    async beforeNext(){ return true; },
   };
 }
 
@@ -914,6 +941,7 @@ function renderPreferencesStep(ctx){
   return {
     async beforeNext(){
       await savePreferences();
+      noteSaved('How Chronos and an AI copilot talk to you');
       ctx.setStatus('Preferences saved.');
       return true;
     }
@@ -924,17 +952,40 @@ function renderWrapStep(ctx){
   const container = ctx.container;
   container.innerHTML = '';
   const summary = document.createElement('p');
-  summary.textContent = `Nice work, @${state.nickname || 'Pilot'}! Launch the dashboard widgets or re-run this wizard anytime from the menu.`;
+  summary.textContent = `Nice work, @${state.nickname || 'Pilot'}! Re-run this wizard anytime from the menu.`;
   container.appendChild(summary);
-  if (state.createdItems.length){
+  const addList = (title, rows) => {
+    const head = document.createElement('p');
+    head.textContent = title;
     const list = document.createElement('ul');
-    state.createdItems.slice(-8).forEach(item => {
+    rows.forEach(text => {
       const li = document.createElement('li');
-      li.textContent = item;
+      li.textContent = text;
       list.appendChild(li);
     });
-    container.appendChild(list);
-  }
+    container.append(head, list);
+  };
+  // Only what this run saved, then what is on disk now (asked again, not remembered).
+  addList('Saved in this run:', state.saved.length ? state.saved : ['Nothing (every step was skipped).']);
+  const nextLine = document.createElement('p');
+  nextLine.textContent = 'Checking your day...';
+  container.appendChild(nextLine);
+  void (async () => {
+    const [days, goals, commitments] = await Promise.all([
+      listNames('template', 'day'), listNames('item', 'goal'), listNames('item', 'commitment'),
+    ]);
+    nextLine.remove();
+    addList('You have now:', [
+      `Day templates: ${describeNames(days, 'none')}`,
+      `Goals: ${describeNames(goals, 'none')}`,
+      `Commitments: ${describeNames(commitments, 'none')}`,
+    ]);
+    const next = document.createElement('p');
+    next.textContent = (days && !days.length)
+      ? 'Next: press "Set up my day skeleton" on Home (Life Setup). Without a day template Chronos has no day to plan.'
+      : 'Next: on Home, press "Plan my day".';
+    container.appendChild(next);
+  })();
   return {};
 }
 
@@ -963,6 +1014,7 @@ const steps = [
         async beforeNext(){
           const name = input.value.trim() || 'Pilot';
           await saveProfile(name);
+          noteSaved(`Nickname: ${name}`);
           ctx.setStatus(`Saved nickname ${name}.`);
           return true;
         }
@@ -987,14 +1039,14 @@ const steps = [
   },
   {
     id: 'templates',
-    title: 'Templates & Routines',
+    title: 'Your Day',
     async render(ctx){
-      return renderTemplateStep(ctx);
+      return renderDayStep(ctx);
     }
   },
   {
     id: 'goals',
-    title: 'Goals, Commitments, Rewards',
+    title: 'Goals & Commitments',
     async render(ctx){
       return renderGoalStep(ctx);
     }

@@ -84,20 +84,27 @@ class OnboardingWizard:
         return self.settings_dir / f"{self.status_slug(name)}_settings.yml"
 
     def ensure_examples(self) -> None:
-        # Examples were added to the repo, so this mostly verifies presence and
-        # nudges the user if files are missing.
+        # The example items lived in user/examples/ before alpha_v0.3, which dropped
+        # them (issue 32). A new user has nothing to restore, so this no longer warns
+        # about missing files: each step below clones an example only when it
+        # exists and otherwise says where the real thing is built.
         expected = [
             self.user_dir / "days" / "weekday_example.yml",
             self.user_dir / "routines" / "morning_routine_example.yml",
             self.user_dir / "habits" / "creative_practice_example.yml",
             self.user_dir / "goals" / "learn_guitar_example.yml",
         ]
-        missing = [str(path.relative_to(self.root)) for path in expected if not path.exists()]
-        if missing:
-            print("Heads up — some example files are missing:")
-            for rel in missing:
-                print(f"  - {rel}")
-            print("The wizard will continue, but consider restoring them.")
+        self.examples_present = [path for path in expected if path.exists()]
+
+    def day_template_names(self) -> list[str]:
+        days = self.user_dir / "days"
+        names = []
+        if days.is_dir():
+            for path in sorted(days.glob("*.yml")):
+                data = self.load_yaml(path, {})
+                name = data.get("name") or data.get("Name") if isinstance(data, dict) else None
+                names.append(str(name or path.stem))
+        return names
 
     def intro(self) -> None:
         print("=" * 72)
@@ -282,6 +289,27 @@ class OnboardingWizard:
         print()
 
     def step_template(self):
+        src = self.user_dir / "days" / "weekday_example.yml"
+        if not src.exists():
+            # Before (issue 32): the clone defaulted to yes and saved a day template
+            # holding only a name (no sleep, no blocks), which Kairos could then pick.
+            existing = self.day_template_names()
+            print(
+                textwrap.fill(
+                    "Chronos plans every day on a day template: your sleep, work, meals "
+                    "and commute, the fixed points everything else flows around.",
+                    width=72,
+                )
+            )
+            if existing:
+                print(f"Your day templates: {', '.join(existing)}.")
+                print("Change them in the dashboard's Day Builder, or rerun Life Setup.\n")
+            else:
+                print(
+                    "You have none yet. Build yours with Life Setup: open the dashboard "
+                    "(dashboard_launcher.bat) and press 'Set up my day skeleton' on Home.\n"
+                )
+            return
         print(
             "Templates keep your day consistent. The Weekday Example template "
             "includes the demo routines you can clone."
@@ -300,7 +328,6 @@ class OnboardingWizard:
         print(f"Saved to {dest.relative_to(self.root)}\n")
 
     def step_example_items(self):
-        print("Next, let’s clone the example routines and items you care about.")
         example_map = [
             ("routine", "Morning Routine (Example)", self.user_dir / "routines" / "morning_routine_example.yml"),
             ("routine", "Evening Routine (Example)", self.user_dir / "routines" / "evening_routine_example.yml"),
@@ -308,6 +335,19 @@ class OnboardingWizard:
             ("habit", "Creative Practice (Example)", self.user_dir / "habits" / "creative_practice_example.yml"),
             ("habit", "Morning Check-In (Example)", self.user_dir / "habits" / "morning_check_in_example.yml"),
         ]
+        if not any(src.exists() for _, _, src in example_map):
+            print(
+                textwrap.fill(
+                    "Routines (a morning or wind-down routine) are built in the dashboard's "
+                    "Routine Builder; put them on your day in the Day Builder so Chronos "
+                    "plans them. Habits and chores: the Chore Setup wizard, or Home's "
+                    "capture box.",
+                    width=72,
+                )
+            )
+            print()
+            return
+        print("Next, let’s clone the example routines and items you care about.")
         for item_type, display_name, src in example_map:
             if not src.exists():
                 continue
@@ -325,7 +365,15 @@ class OnboardingWizard:
     def step_goal(self):
         src = self.user_dir / "goals" / "learn_guitar_example.yml"
         if not src.exists():
-            print("Goal example not found; skipping goal setup.\n")
+            print(
+                textwrap.fill(
+                    "Goals tell Chronos what you are aiming for; it pushes the habits and "
+                    "tasks linked to them. Plan one with the dashboard's Goal Planning "
+                    "wizard (Home, 'Plan a goal'), or type it on Home's capture box.",
+                    width=72,
+                )
+            )
+            print()
             return
         print("Goals keep big milestones visible. The Learn Guitar Example shows count/checklist milestones.")
         if prompt_yes_no("Clone the goal example now?", True):
@@ -341,7 +389,15 @@ class OnboardingWizard:
     def step_commitment(self):
         src = self.user_dir / "commitments" / "practice_rhythm_commitment_example.yml"
         if not src.exists():
-            print("Commitment example missing; skipping.\n")
+            print(
+                textwrap.fill(
+                    "Commitments are promises such as '3 workouts a week'; Chronos pushes "
+                    "their habit harder as the week runs out. Make one on Home's capture "
+                    "box: choose Commitment, how often, per what, and the habit it counts.",
+                    width=72,
+                )
+            )
+            print()
             return
         print(
             "Commitments are promises with frequency rules. The practice example ties to the Creative Practice habit."
@@ -436,6 +492,11 @@ class OnboardingWizard:
                 print(f" - {item}")
         else:
             print("No files were changed this time.")
+        if not self.day_template_names():
+            print(
+                "\nYou have no day template yet, so Chronos has no day to plan. Next: open "
+                "the dashboard and press 'Set up my day skeleton' (Life Setup) on Home."
+            )
         print(
             "\nNext steps: launch the dashboard (`dashboard_launcher.bat`), start the "
             "listener, and feel free to rerun onboarding_wizard.bat if you want to "
